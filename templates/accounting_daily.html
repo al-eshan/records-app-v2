@@ -1,0 +1,328 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="container" style="max-width: 1100px;">
+  <div class="card shadow-sm">
+    <div class="card-body p-4">
+
+      <!-- Header -->
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+          <h3 class="mb-1">المحاسبة اليومية — {{ kind }}</h3>
+        </div>
+        <div class="d-flex gap-2">
+<a class="btn btn-secondary btn-sm" href="{{ url_for('accounting_es', kind=kind) }}">↩ رجوع</a>
+
+<a class="btn btn-success btn-sm"
+   href="{{ url_for('accounting_movements', kind=kind, **{'from': day_date, 'to': day_date}) }}">
+  🔍 استعلام
+</a>
+
+
+        </div>
+      </div>
+
+      <hr>
+
+      <form method="post">
+
+  <!-- Date & Cash & Enjaz -->
+<div class="row g-3 align-items-end">
+
+  <!-- التاريخ -->
+  <div class="col-md-3">
+    <label class="form-label">التاريخ</label>
+    <div class="input-group">
+      <input type="date" class="form-control" name="day_date" value="{{ day_date }}" required>
+      <button type="submit"
+              name="action"
+              value="open_date"
+              class="btn btn-link p-0 ms-2 text-primary"
+              title="بحث">
+        🔍
+      </button>
+    </div>
+  </div>
+
+  <!-- صندوق بداية اليوم -->
+  <div class="col-md-3">
+    <label class="form-label">صندوق بداية اليوم</label>
+    <input type="number"
+           step="0.01"
+           class="form-control cash-start"
+           name="cash_start"
+           value="{{ header.cash_start if header else '' }}"
+           placeholder="0">
+  </div>
+
+  <!-- صندوق نهاية اليوم -->
+  <div class="col-md-3">
+    <label class="form-label">صندوق نهاية اليوم</label>
+    <input type="number"
+           step="0.01"
+           class="form-control cash-end"
+           name="cash_end"
+           value="{{ header.cash_end if header else '' }}"
+           placeholder="0">
+  </div>
+
+  <!-- الإجمالي الكلي في إنجاز -->
+  <div class="col-md-3">
+    <label class="form-label">الإجمالي الكلي في إنجاز</label>
+    <input type="number"
+           step="0.01"
+           class="form-control total-in-enjaz"
+           name="total_in_enjaz"
+           value="{{ header.total_in_enjaz if header else '' }}"
+           placeholder="0">
+  </div>
+
+</div>
+
+
+        <!-- Tables -->
+        <div class="row g-3 mt-1">
+
+          <!-- Inputs -->
+          <div class="col-lg-4">
+            <h5 class="mt-3">المدخلات</h5>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle">
+                <thead>
+                  <tr>
+                    <th>النوع</th>
+                    <th style="width:140px;">المبلغ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for i in range(8) %}
+                  <tr>
+                    <td>
+                      <input class="form-control form-control-sm" name="input_type"
+                             value="{{ inputs[i].input_type if i < inputs|length else '' }}">
+                    </td>
+                    <td>
+<input type="number" step="0.01" class="form-control form-control-sm input-amount"
+       name="input_amount"
+                             value="{{ inputs[i].amount if i < inputs|length else '' }}">
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- General Expenses -->
+          <div class="col-lg-4">
+            <h5 class="mt-3">مصروفات عامة</h5>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle">
+                <thead>
+                  <tr>
+                    <th>النوع</th>
+                    <th style="width:140px;">المبلغ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for i in range(8) %}
+                  <tr>
+                    <td>
+                      <input class="form-control form-control-sm" name="gen_type"
+                             value="{{ gen[i].expense_type if i < gen|length else '' }}">
+                    </td>
+                    <td>
+<input type="number" step="0.01" class="form-control form-control-sm gen-amount"
+       name="gen_amount"
+                             value="{{ gen[i].amount if i < gen|length else '' }}">
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Petty Expenses -->
+          <div class="col-lg-4">
+            <h5 class="mt-3">مصروفات نثرية</h5>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle">
+                <thead>
+                  <tr>
+                    <th>النوع</th>
+                    <th style="width:140px;">المبلغ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for i in range(8) %}
+                  <tr>
+                    <td>
+                      <input class="form-control form-control-sm" name="petty_type"
+                             value="{{ petty[i].expense_type if i < petty|length else '' }}">
+                    </td>
+                    <td>
+<input type="number" step="0.01" class="form-control form-control-sm petty-amount"
+       name="petty_amount"
+                             value="{{ petty[i].amount if i < petty|length else '' }}">
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+
+<!-- Totals Row 1 -->
+<div class="row g-3 mt-3">
+  <div class="col-md-3">
+    <div class="p-3 bg-light rounded totals-card">
+      <div class="small text-muted">إجمالي صندوق البداية</div>
+      <div class="fs-5 fw-bold" id="total-cash-start">
+        {{ '%.2f'|format(totals.cash_start) }}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="p-3 bg-light rounded totals-card">
+      <div class="small text-muted">إجمالي صندوق النهاية</div>
+      <div class="fs-5 fw-bold" id="total-cash-end">
+        {{ '%.2f'|format(totals.cash_end) }}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="p-3 bg-light rounded totals-card">
+      <div class="small text-muted">إجمالي المدخلات</div>
+      <div class="fs-5 fw-bold" id="total-inputs">
+        {{ '%.2f'|format(totals.inputs) }}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="p-3 bg-light rounded totals-card">
+      <div class="small text-muted">إجمالي المصروفات العامة</div>
+      <div class="fs-5 fw-bold" id="total-general">
+        {{ '%.2f'|format(totals.general) }}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Totals Row 2 -->
+<div class="row g-3 mt-2">
+  <div class="col-md-3">
+    <div class="p-3 bg-light rounded totals-card">
+      <div class="small text-muted">إجمالي المصروفات النثرية</div>
+      <div class="fs-5 fw-bold" id="total-petty">
+        {{ '%.2f'|format(totals.petty) }}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="p-3 bg-light rounded totals-card">
+      <div class="small text-muted">إجمالي المصروفات</div>
+      <div class="fs-5 fw-bold" id="total-expenses">
+        {{ '%.2f'|format(totals.expenses) }}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="p-3 bg-light rounded totals-card">
+      <div class="small text-muted">الإجمالي الكلي</div>
+      <div class="fs-5 fw-bold" id="total-overall">
+        {{ '%.2f'|format(totals.total_overall) }}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="p-3 bg-light rounded totals-card">
+      <div class="small text-muted">الخطاء</div>
+      <div class="fs-5 fw-bold text-danger" id="total-error">
+        {{ '%.2f'|format(totals.error) }}
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+        <!-- Save -->
+        <div class="d-flex justify-content-end mt-3">
+<button type="submit" class="btn btn-primary" name="action" value="save">حفظ</button>
+        </div>
+       <!-- Notes -->
+        <div class="mt-3">
+          <label class="form-label">ملاحظات (اختياري)</label>
+          <textarea class="form-control" name="notes" rows="2"
+            placeholder="ملاحظات اليوم...">{{ header.notes if header and header.notes else '' }}</textarea>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+function toFloat(v){
+  const s = (v ?? "").toString().trim();
+  if(!s) return 0;
+  const n = parseFloat(s.replace(/,/g,''));
+  return isNaN(n) ? 0 : n;
+}
+function sumBy(sel){
+  let t = 0;
+  document.querySelectorAll(sel).forEach(el => {
+    t += toFloat(el.value);
+  });
+  return t;
+}
+function setText(id, val){
+  const el = document.getElementById(id);
+  if(el) el.textContent = val.toFixed(2);
+}
+
+function recalcTotals(){
+  const inputs  = sumBy('.input-amount');
+  const general = sumBy('.gen-amount');
+  const petty   = sumBy('.petty-amount');
+  const expenses = general + petty;
+
+  const cashStart = toFloat(document.querySelector('.cash-start')?.value);
+  const cashEnd   = toFloat(document.querySelector('.cash-end')?.value);
+  const inEnjaz   = toFloat(document.querySelector('.total-in-enjaz')?.value);
+
+  const totalOverall = inputs + expenses + cashEnd - cashStart;
+  const error = totalOverall - inEnjaz;
+
+  setText('total-inputs', inputs);
+  setText('total-general', general);
+  setText('total-petty', petty);
+  setText('total-expenses', expenses);
+
+  // ✅ الجديد: تحديث إجمالي الصناديق فوراً
+  setText('total-cash-start', cashStart);
+  setText('total-cash-end', cashEnd);
+
+  setText('total-overall', totalOverall);
+  setText('total-error', error);
+}
+
+document.addEventListener('input', (e) => {
+  if (e.target.matches('.input-amount,.gen-amount,.petty-amount,.cash-start,.cash-end,.total-in-enjaz')) {
+    recalcTotals();
+  }
+});
+
+// أول تحميل
+recalcTotals();
+</script>
+
+
+{% endblock %}

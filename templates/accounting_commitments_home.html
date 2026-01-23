@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="container" style="max-width: 1100px;">
+  <div class="card shadow-sm">
+    <div class="card-body p-4">
+
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+          <h3 class="mb-1">الالتزامات المالية</h3>
+          <div class="text-muted">جدول واحد لجميع الفروع</div>
+        </div>
+        <div class="d-flex gap-2">
+          <a class="btn btn-secondary btn-sm" href="{{ url_for('accounting_home') }}">↩ رجوع</a>
+        </div>
+      </div>
+
+      <hr>
+
+      <!-- إضافة جديد -->
+      <form method="post" class="row g-2 align-items-end mb-3">
+        <input type="hidden" name="action" value="add">
+        <div class="col-md-7">
+          <label class="form-label">جهة الالتزام</label>
+          <input type="text" class="form-control" name="party" placeholder="مثال: إيجار / مورد / قسط ..." required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">المبلغ</label>
+          <div class="input-group">
+            <input type="number" step="0.01" class="form-control amount-live" name="amount" placeholder="0">
+            <span class="input-group-text riyal-icon">
+              <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+            </span>
+          </div>
+        </div>
+        <div class="col-md-2 d-grid">
+          <button class="btn btn-primary" type="submit">إضافة</button>
+        </div>
+      </form>
+
+      <div class="table-responsive">
+        <table class="table table-striped table-hover align-middle">
+          <thead>
+            <tr>
+              <th>جهة الالتزام</th>
+              <th style="width:220px;">المبلغ</th>
+              <th style="width:220px;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if rows|length == 0 %}
+              <tr><td colspan="3" class="text-center text-muted py-4">لا توجد التزامات</td></tr>
+            {% endif %}
+
+            {% for r in rows %}
+            <tr data-row="{{ r.id }}">
+              <td>
+                <input type="text" class="form-control form-control-sm party-input" value="{{ r.party }}" readonly>
+              </td>
+              <td>
+                <div class="input-group input-group-sm">
+                  <input type="number" step="0.01" class="form-control form-control-sm amount-input amount-live"
+                         value="{{ '%.2f'|format(r.amount or 0) }}" readonly>
+                  <span class="input-group-text riyal-icon">
+                    <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+                  </span>
+                </div>
+              </td>
+              <td class="d-flex gap-2">
+                <button type="button" class="btn btn-outline-warning btn-sm btn-edit">تعديل</button>
+
+                <form method="post" class="m-0 d-inline-flex gap-2">
+                  <input type="hidden" name="action" value="update">
+                  <input type="hidden" name="id" value="{{ r.id }}">
+                  <input type="hidden" name="party" class="party-hidden">
+                  <input type="hidden" name="amount" class="amount-hidden">
+                  <button type="submit" class="btn btn-success btn-sm btn-save" disabled>حفظ</button>
+                </form>
+
+                <form method="post" class="m-0">
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="{{ r.id }}">
+                  <button type="submit" class="btn btn-outline-danger btn-sm"
+                          onclick="return confirm('حذف هذا الالتزام؟');">حذف</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+
+          <tfoot>
+            <tr>
+              <td class="fw-bold">المجموع</td>
+              <td>
+                <div class="input-group input-group-sm">
+                  <input class="form-control form-control-sm fw-bold" id="sum-total"
+                         value="{{ '%.2f'|format(total) }}" readonly>
+                  <span class="input-group-text riyal-icon">
+                    <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+                  </span>
+                </div>
+              </td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+function toFloat(v){ const n=parseFloat(v); return isNaN(n)?0:n; }
+function recalcSum(){
+  let total = 0;
+  document.querySelectorAll('.amount-live').forEach(el => total += toFloat(el.value));
+  const out = document.getElementById('sum-total');
+  if(out) out.value = total.toFixed(2);
+}
+
+document.addEventListener('click', (e) => {
+  const tr = e.target.closest('tr[data-row]');
+  if(!tr) return;
+
+  if(e.target.classList.contains('btn-edit')){
+    const party = tr.querySelector('.party-input');
+    const amount = tr.querySelector('.amount-input');
+    const saveBtn = tr.querySelector('.btn-save');
+
+    party.readOnly = false;
+    amount.readOnly = false;
+    saveBtn.disabled = false;
+    party.focus();
+  }
+});
+
+document.addEventListener('input', (e) => {
+  if(e.target.matches('.amount-live')) recalcSum();
+
+  const tr = e.target.closest('tr[data-row]');
+  if(tr){
+    const party = tr.querySelector('.party-input')?.value || '';
+    const amount = tr.querySelector('.amount-input')?.value || '0';
+    const partyHidden = tr.querySelector('.party-hidden');
+    const amountHidden = tr.querySelector('.amount-hidden');
+    if(partyHidden) partyHidden.value = party;
+    if(amountHidden) amountHidden.value = amount;
+  }
+});
+
+recalcSum();
+</script>
+
+{% endblock %}

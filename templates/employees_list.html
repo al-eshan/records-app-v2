@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<h4 class="mb-3">الموظفين</h4>
+<a href="/employees/new" class="btn btn-sm btn-success mb-2">إضافة موظف</a>
+
+<table class="table table-bordered">
+<thead class="table-dark">
+<tr>
+  <th>الاسم عربي</th>
+  <th>الاسم إنجليزي</th>
+  <th>انتهاء الجواز</th>
+  <th>انتهاء الإقامة</th>
+  <th>انتهاء التأمين</th>
+  <th></th>
+</tr>
+</thead>
+<tbody>
+{% for r in rows %}
+<tr>
+  <td>{{ r.name_ar }}</td>
+  <td>{{ r.name_en or "-" }}</td>
+
+  <td class="{{ status_color(r.passport_expiry) }}">
+    {{ r.passport_expiry or "-" }}
+  </td>
+  <td class="{{ status_color(r.iqama_expiry) }}">
+    {{ r.iqama_expiry or "-" }}
+  </td>
+  <td class="{{ status_color(r.insurance_expiry) }}">
+    {{ r.insurance_expiry or "-" }}
+  </td>
+
+  <td>
+    <a href="/employees/{{r.id}}" class="btn btn-sm btn-info">تفاصيل</a>
+    <a href="/employees/{{r.id}}/edit" class="btn btn-sm btn-warning">تعديل</a>
+    <form method="post" action="/employees/{{r.id}}/delete" style="display:inline" onsubmit="return confirm('حذف الموظف؟');">
+      <button class="btn btn-sm btn-danger">حذف</button>
+    </form>
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}

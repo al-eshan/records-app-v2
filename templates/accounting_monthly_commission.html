@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-tiles">
+
+  <!-- ===== Title ===== -->
+  <div class="page-titlebar">
+    <h3>عمولة المبيعات الشهرية</h3>
+    <div class="text-muted">حفظ + تعديل + استعراض الأشهر السابقة</div>
+  </div>
+
+  <!-- ===== Settings ===== -->
+  <div class="tile-card mb-3" style="cursor: default;">
+    <div class="tile-title">إعدادات المعادلات</div>
+    <div class="tile-sub mb-3">
+      يتم تطبيق هذه القيم على الحفظ الجديد فقط (القيم السابقة تبقى كما هي)
+    </div>
+
+    <form method="post" class="row g-3">
+      <input type="hidden" name="action" value="save_settings">
+
+      <div class="col-12 col-md-4">
+        <label class="form-label text-white-50">نسبة العمولة</label>
+        <input type="number" step="0.0001" min="0"
+               name="rate" class="form-control"
+               value="{{ settings.commission_rate }}" required>
+      </div>
+
+      <div class="col-12 col-md-4">
+        <label class="form-label text-white-50">الخصم الثابت</label>
+        <input type="number" step="0.01" min="0"
+               name="base_deduction" class="form-control"
+               value="{{ settings.fixed_deduction }}" required>
+      </div>
+
+      <div class="col-12 col-md-4">
+        <label class="form-label text-white-50">عدد الموظفين</label>
+        <input type="number" min="1"
+               name="employees_count" class="form-control"
+               value="{{ settings.employees_count }}" required>
+      </div>
+
+      <div class="col-12">
+        <button type="submit" class="btn btn-outline-light">
+          حفظ الإعدادات
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ===== Monthly Entry ===== -->
+  <div class="tile-card" style="cursor: default;">
+    <div class="tile-title">إدخال بيانات الشهر</div>
+    <div class="tile-sub mb-3">اختر الشهر وأدخل المبيعات قبل الضريبة</div>
+
+    <form method="post" id="mcForm" class="row g-3">
+      <input type="hidden" name="action" value="save_month">
+
+      <div class="col-12 col-md-4">
+        <label class="form-label text-white-50">الشهر</label>
+        <input type="month" name="month" id="mcMonth"
+               class="form-control" required>
+      </div>
+
+      <div class="col-12 col-md-8">
+        <label class="form-label text-white-50">المبيعات قبل الضريبة</label>
+        <div class="input-group">
+          <input type="number" step="0.01" min="0"
+                 name="sales" id="mcSales"
+                 class="form-control" required>
+          <span class="input-group-text riyal-icon">
+  <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+</span>
+
+        </div>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label text-white-50">إجمالي العمولة</label>
+        <div class="input-group">
+          <input type="text" id="mcTotal" class="form-control" readonly>
+          <span class="input-group-text riyal-icon">
+  <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+</span>
+
+        </div>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label text-white-50">عمولة الموظف</label>
+        <div class="input-group">
+          <input type="text" id="mcEmp" class="form-control" readonly>
+         <span class="input-group-text riyal-icon">
+  <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+</span>
+
+        </div>
+      </div>
+
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-success">حفظ / تعديل</button>
+        <button type="button" class="btn btn-outline-light" id="mcClearBtn">
+          تفريغ
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ===== Saved Months ===== -->
+  <div class="tile-card mt-3" style="cursor: default;">
+    <div class="tile-title">الأشهر المحفوظة</div>
+
+    <div class="table-wrap">
+      <table class="table table-hover align-middle text-center premium-table mb-0">
+        <thead class="table-dark">
+          <tr>
+            <th>الشهر</th>
+            <th>المبيعات</th>
+            <th>إجمالي العمولة</th>
+            <th>عمولة الموظف</th>
+            <th>الإعدادات وقت الحفظ</th>
+            <th>إجراء</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="fw-bold">{{ r.month }}</td>
+            <td>{{ "%.2f"|format(r.sales_before_tax) }}</td>
+            <td>{{ "%.2f"|format(r.total_commission) }}</td>
+            <td>{{ "%.2f"|format(r.employee_commission) }}</td>
+            <td class="text-muted small">
+              نسبة {{ r.rate_snapshot }} |
+              خصم {{ r.deduction_snapshot }} |
+              موظفين {{ r.employees_snapshot }}
+            </td>
+            <td>
+              <button type="button"
+                      class="btn btn-sm btn-primary mcEditBtn"
+                      data-month="{{ r.month }}"
+                      data-sales="{{ r.sales_before_tax }}">
+                تعديل
+              </button>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="6" class="text-muted">لا توجد بيانات</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  const monthEl = document.getElementById('mcMonth');
+  const salesEl = document.getElementById('mcSales');
+  const totalEl = document.getElementById('mcTotal');
+  const empEl   = document.getElementById('mcEmp');
+  const clearBtn = document.getElementById('mcClearBtn');
+
+  const SETTINGS = {
+    rate: {{ settings.commission_rate|tojson }},
+    deduction: {{ settings.fixed_deduction|tojson }},
+    employees: {{ settings.employees_count|tojson }}
+  };
+
+  function calc(){
+    const sales = parseFloat(salesEl.value || 0);
+    const total = sales * SETTINGS.rate;
+    const emp   = (total - SETTINGS.deduction) / Math.max(1, SETTINGS.employees);
+    totalEl.value = total.toFixed(2);
+    empEl.value   = emp.toFixed(2);
+  }
+
+  salesEl.addEventListener('input', calc);
+
+  document.querySelectorAll('.mcEditBtn').forEach(btn=>{
+    btn.onclick = ()=>{
+      monthEl.value = btn.dataset.month;
+      salesEl.value = btn.dataset.sales;
+      calc();
+      window.scrollTo({top:0, behavior:'smooth'});
+    };
+  });
+
+  clearBtn.onclick = ()=>{
+    monthEl.value = "";
+    salesEl.value = "";
+    totalEl.value = "";
+    empEl.value = "";
+  };
+})();
+</script>
+
+{% endblock %}
+

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<h4 class="mb-3">سجلات {{ kind }}</h4>
+<a href="/records/{{kind}}/new" class="btn btn-sm btn-primary mb-2">إضافة سجل</a>
+
+<table class="table table-bordered">
+<thead class="table-dark">
+<tr>
+  <th>نوع</th><th>رقم</th><th>انتهاء</th><th>متبقي</th><th></th>
+</tr>
+</thead>
+<tbody>
+{% for r in rows %}
+<tr class="{{ status_color(r.expiry_date) }}">
+<td>{{ r.record_type }}</td>
+<td>{{ r.record_number }}</td>
+<td>{{ r.expiry_date or "-" }}</td>
+<td>{{ days_left(r.expiry_date) or "-" }}</td>
+<td>
+  <a href="/records/{{kind}}/{{r.id}}/edit" class="btn btn-sm btn-warning">تعديل</a>
+  <form method="post" action="/records/{{kind}}/{{r.id}}/delete" style="display:inline">
+    <button class="btn btn-sm btn-danger">حذف</button>
+  </form>
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}

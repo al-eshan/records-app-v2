@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="container" style="max-width: 900px;">
+  <div class="card shadow-sm">
+    <div class="card-body p-4">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+          <h3 class="mb-1">محاسبة {{ kind }}</h3>
+          <div class="text-muted">اختر العملية — التاريخ الافتراضي: {{ today }}</div>
+        </div>
+        <a class="btn btn-outline-secondary" href="{{ url_for('accounting_home') }}">رجوع</a>
+      </div>
+
+      <hr>
+
+      <div class="d-flex gap-2 flex-wrap">
+        <a class="btn btn-primary" href="{{ url_for('accounting_daily', kind=kind, date=today) }}">
+          المحاسبة اليومية
+        </a>
+        <a class="btn btn-success" href="{{ url_for('accounting_movements', kind=kind, **{'from': today, 'to': today}) }}">
+          استعلام حركات المحاسبة اليومية
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

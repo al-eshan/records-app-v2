@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h4>{{ "إضافة" if mode=="new" else "تعديل" }} سجل {{ kind }}</h4>
+<form method="post">
+  <div class="mb-3">
+    <label>نوع السجل</label>
+    <input name="record_type" class="form-control" value="{{ row.record_type if row }}">
+  </div>
+  <div class="mb-3">
+    <label>رقم السجل</label>
+    <input name="record_number" class="form-control" required value="{{ row.record_number if row }}">
+  </div>
+  <div class="mb-3">
+    <label>تاريخ الانتهاء</label>
+    <input type="date" name="expiry_date" class="form-control" value="{{ row.expiry_date if row }}">
+  </div>
+  <button class="btn btn-primary">حفظ</button>
+</form>
+{% endblock %}
