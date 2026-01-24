@@ -22,7 +22,13 @@ from google.oauth2.service_account import Credentials as SA_Credentials
 # =========================
 APP_TITLE = "نظام السجلات والموظفين"
 BASE_DIR = os.path.dirname(__file__)
-DATABASE = os.path.join(BASE_DIR, "data.db")
+
+# Database path:
+# - Render / Production  → /var/data/data.db
+# - Local development    → ./data.db
+BASE_DIR = os.path.dirname(__file__)
+DATABASE = os.environ.get("DATABASE_PATH") or os.path.join(BASE_DIR, "data.db")
+
 
 # المستخدم الرئيسي (فقط هذا يدخل صفحة الصلاحيات)
 MASTER_USERNAME = "adm-es"
@@ -114,9 +120,14 @@ def ensure_db_schema_once():
     if app.config.get("DB_BOOTSTRAPPED"):
         return
 
+    # تأكد المسار موجود (خصوصاً /var/data)
+    db_dir = os.path.dirname(DATABASE)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
     db = get_db()
 
-    # إذا ما فيه جدول users غالبًا قاعدة جديدة
+    # إذا DB جديدة (ما فيه جدول users) طبق schema.sql
     if not _table_exists(db, "users"):
         schema_path = os.path.join(BASE_DIR, "schema.sql")
         with open(schema_path, "r", encoding="utf-8") as f:
