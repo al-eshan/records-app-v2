@@ -1442,11 +1442,12 @@ def employee_delete(eid: int):
 def tasks():
     db = get_db()
 
-    # تأكد من جدول الالتزامات (مع task_id)
+    # 0) تأكد من جدول الالتزامات (مع task_id)
     try:
-        ensure_commitments_schema(db)
+        # غيّر الاسم إذا دالتك اسمها مختلف
+        ensure_financial_commitments_schema(db)
     except Exception as e:
-        print("ensure_commitments_schema error:", e)
+        print("ensure_financial_commitments_schema error:", e)
 
     # =========
     # إضافة مهمة يدوية
@@ -1464,7 +1465,7 @@ def tasks():
             db.commit()
             new_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-            # تصدير Google Sheets اختياري (لا يكسر الصفحة لو ناقص الإعدادات)
+            # تصدير Google Sheets اختياري
             try:
                 ws, err = open_ws("tasks_manual")
                 if not err:
@@ -1476,19 +1477,39 @@ def tasks():
         return redirect(url_for("tasks"))
 
     # =========
-    # 1) المهام اليدوية
+    # (A) الالتزامات المالية
     # =========
-    tasks_list = []
     try:
-        tasks_list = db.execute(
-            "SELECT id, title, due_date, created_at FROM tasks ORDER BY id DESC"
-        ).fetchall()
+        commitments = db.execute("""
+            SELECT id, party, amount, task_id, created_at
+              FROM financial_commitments
+             ORDER BY id DESC
+        """).fetchall()
+    except Exception as e:
+        print("commitments fetch error:", e)
+        commitments = []
+
+    # =========
+    # (B) المهام اليدوية فقط
+    #     نستبعد أي task مربوط في financial_commitments.task_id
+    # =========
+    try:
+        tasks_list = db.execute("""
+            SELECT t.id, t.title, t.due_date, t.created_at
+              FROM tasks t
+             WHERE t.id NOT IN (
+                   SELECT COALESCE(task_id, 0)
+                     FROM financial_commitments
+                    WHERE task_id IS NOT NULL
+             )
+             ORDER BY t.id DESC
+        """).fetchall()
     except Exception as e:
         print("tasks_list error:", e)
         tasks_list = []
 
     # =========
-    # 2) التنبيهات (من السجلات + الموظفين) ضمن 45 يوم
+    # (C) التنبيهات (سجلات + موظفين) ضمن 45 يوم
     # =========
     alerts = []
     DAYS_WINDOW = 45
@@ -1503,13 +1524,11 @@ def tasks():
     for kind in ("ES1", "ES2", "ES3"):
         table = f"records_{kind.lower()}"
         try:
-            recs = db.execute(
-                f"""
+            recs = db.execute(f"""
                 SELECT record_type, record_number, expiry_date
-                FROM {table}
-                WHERE expiry_date IS NOT NULL AND expiry_date <> ''
-                """
-            ).fetchall()
+                  FROM {table}
+                 WHERE expiry_date IS NOT NULL AND expiry_date <> ''
+            """).fetchall()
         except Exception as e:
             print(f"records table error ({table}):", e)
             recs = []
@@ -1535,7 +1554,7 @@ def tasks():
     try:
         emp_rows = db.execute("""
             SELECT name_ar, passport_expiry, iqama_expiry, insurance_expiry
-            FROM employees
+              FROM employees
         """).fetchall()
     except Exception as e:
         print("employees alerts error:", e)
@@ -1565,27 +1584,12 @@ def tasks():
 
     alerts.sort(key=lambda x: x["expiry"] or "9999-12-31")
 
-    # =========
-    # 3) الالتزامات المالية (للعرض في صفحة المهام)
-    # =========
-    try:
-        commitments = db.execute("""
-            SELECT id, party, amount, task_id, created_at
-            FROM financial_commitments
-            ORDER BY id DESC
-        """).fetchall()
-    except Exception as e:
-        print("commitments fetch error:", e)
-        commitments = []
-
     return render_template(
         "tasks.html",
-        tasks=tasks_list,
-        rows=alerts,
-        commitments=commitments
+        tasks=tasks_list,     # مهام يدوية فقط
+        rows=alerts,          # تنبيهات
+        commitments=commitments  # التزامات
     )
-
-
 
 
 @app.route("/tasks/<int:tid>/delete", methods=["POST"])
@@ -1593,17 +1597,32 @@ def tasks():
 @permission_required("tasks")
 def task_delete(tid: int):
     db = get_db()
+
+    # حماية: لا تسمح بحذف مهمة مرتبطة بالتزام مالي
+    try:
+        linked = db.execute(
+            "SELECT 1 FROM financial_commitments WHERE task_id=? LIMIT 1",
+            (tid,),
+        ).fetchone()
+        if linked:
+            flash("هذه المهمة مرتبطة بالتزام مالي ولا يمكن حذفها من هنا.", "warning")
+            return redirect(url_for("tasks"))
+    except Exception as e:
+        print("task_delete linked-check error:", e)
+
     db.execute("DELETE FROM tasks WHERE id=?", (tid,))
     db.commit()
 
-    ws, err = open_ws("tasks_manual")
-    if not err:
-        ws_delete_by_id(ws, tid)
+    # Google Sheets اختياري
+    try:
+        ws, err = open_ws("tasks_manual")
+        if not err:
+            ws_delete_by_id(ws, tid)
+    except Exception as e:
+        print("Google Sheets delete (tasks_manual) error:", e)
 
     flash("تم حذف المهمة اليدوية", "info")
     return redirect(url_for("tasks"))
-
-
 # =========================
 # Permissions (master only)
 # =========================
