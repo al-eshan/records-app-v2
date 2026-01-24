@@ -98,7 +98,6 @@ def init_db():
     db.close()
 
 
-
 def _table_exists(db, name: str) -> bool:
     try:
         row = db.execute(
@@ -116,6 +115,7 @@ def ensure_db_schema_once():
         return
 
     db = get_db()
+
     # إذا ما فيه جدول users غالبًا قاعدة جديدة
     if not _table_exists(db, "users"):
         schema_path = os.path.join(BASE_DIR, "schema.sql")
@@ -138,12 +138,13 @@ def ensure_financial_commitments_schema(db):
         updated_at TEXT
     )
     """)
+
+    # أسماء الأعمدة من PRAGMA table_info
     cols = [r[1] for r in db.execute("PRAGMA table_info(financial_commitments)").fetchall()]
     if "task_id" not in cols:
         db.execute("ALTER TABLE financial_commitments ADD COLUMN task_id INTEGER")
+
     db.commit()
-
-
 
 
 def ensure_master_user():
@@ -160,7 +161,10 @@ def ensure_master_user():
             (MASTER_USERNAME, generate_password_hash(default_pass), datetime.now().isoformat()),
         )
         db.commit()
-        uid = db.execute("SELECT id FROM users WHERE username=?", (MASTER_USERNAME,)).fetchone()["id"]
+        uid = db.execute(
+            "SELECT id FROM users WHERE username=?",
+            (MASTER_USERNAME,),
+        ).fetchone()["id"]
 
     # تأكد من وجود الصلاحيات كلها للمستخدم الرئيسي
     for k in PERM_KEYS:
@@ -180,10 +184,13 @@ def _ensure_bootstrap():
     # Bootstrap DB schema + master user (خفيف بعد أول مرة)
     try:
         ensure_db_schema_once()
+        db = get_db()
+        ensure_financial_commitments_schema(db)
         ensure_master_user()
-    except Exception:
-        # لا نوقف الطلب بسبب مشكلة تهيئة (يفضّل تسجيلها لاحقاً)
+    except Exception as e:
+        print("bootstrap error:", e)
         pass
+
 
 # =========================
 # Financial Commitments -> Tasks helpers
@@ -223,11 +230,14 @@ def create_or_update_commitment_task(db, commitment_id):
 
 
 def delete_commitment_task(db, commitment_id):
-    row = db.execute("SELECT task_id FROM financial_commitments WHERE id=?", (commitment_id,)).fetchone()
+    row = db.execute(
+        "SELECT task_id FROM financial_commitments WHERE id=?",
+        (commitment_id,),
+    ).fetchone()
+
     if row and row["task_id"]:
         db.execute("DELETE FROM tasks WHERE id=?", (row["task_id"],))
         db.commit()
-
 
 # =========================
 # Google Sheets (Service Account ONLY)
@@ -1396,6 +1406,35 @@ def employee_edit(eid: int):
 
     return render_template("employee_form.html", mode="edit", row=row)
 
+@app.route("/employees/<int:eid>/delete", methods=["POST"])
+@login_required
+@permission_required("employees")
+def employee_delete(eid: int):
+    db = get_db()
+
+    # تأكد أن الموظف موجود
+    row = db.execute("SELECT id FROM employees WHERE id=?", (eid,)).fetchone()
+    if not row:
+        flash("الموظف غير موجود", "warning")
+        return redirect(url_for("employees_list"))
+
+    try:
+        db.execute("DELETE FROM employees WHERE id=?", (eid,))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        # اطبع الخطأ في اللوق (مفيد في Render)
+        print("employee_delete error:", e)
+        flash("تعذر حذف الموظف (راجع السجلات).", "danger")
+        return redirect(url_for("employees_list"))
+
+    # حذف من Google Sheets (اختياري)
+    ws, err = open_ws("employees")
+    if not err:
+        ws_delete_by_id(ws, eid)
+
+    flash("تم حذف الموظف", "info")
+    return redirect(url_for("employees_list"))
 
 @app.route("/tasks", methods=["GET", "POST"])
 @login_required
