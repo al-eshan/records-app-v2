@@ -12,9 +12,8 @@ from flask import (
 
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# Google Sheets (Service Account)
-import gspread
-from google.oauth2.service_account import Credentials as SA_Credentials
+import urllib.request
+import urllib.error
 
 
 # =========================
@@ -26,15 +25,10 @@ BASE_DIR = os.path.dirname(__file__)
 # Database path:
 # - Render / Production  → /var/data/data.db
 # - Local development    → ./data.db
-BASE_DIR = os.path.dirname(__file__)
 DATABASE = os.environ.get("DATABASE_PATH") or os.path.join(BASE_DIR, "data.db")
-
 
 # المستخدم الرئيسي (فقط هذا يدخل صفحة الصلاحيات)
 MASTER_USERNAME = "adm-es"
-
-# Google Sheets Scope (Service Account)
-GOOGLE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 # صلاحيات النظام
 PERM_KEYS = [
@@ -150,7 +144,6 @@ def ensure_financial_commitments_schema(db):
     )
     """)
 
-    # أسماء الأعمدة من PRAGMA table_info
     cols = [r[1] for r in db.execute("PRAGMA table_info(financial_commitments)").fetchall()]
     if "task_id" not in cols:
         db.execute("ALTER TABLE financial_commitments ADD COLUMN task_id INTEGER")
@@ -177,7 +170,6 @@ def ensure_master_user():
             (MASTER_USERNAME,),
         ).fetchone()["id"]
 
-    # تأكد من وجود الصلاحيات كلها للمستخدم الرئيسي
     for k in PERM_KEYS:
         db.execute(
             """
@@ -192,7 +184,6 @@ def ensure_master_user():
 
 @app.before_request
 def _ensure_bootstrap():
-    # Bootstrap DB schema + master user (خفيف بعد أول مرة)
     try:
         ensure_db_schema_once()
         db = get_db()
@@ -220,13 +211,11 @@ def create_or_update_commitment_task(db, commitment_id):
 
     title = _commitment_task_title(row["party"], float(row["amount"] or 0))
 
-    # تحديث مهمة موجودة
     if row["task_id"]:
         db.execute("UPDATE tasks SET title=? WHERE id=?", (title, row["task_id"]))
         db.commit()
         return
 
-    # إنشاء مهمة جديدة
     cur = db.execute(
         "INSERT INTO tasks (title, due_date, created_at) VALUES (?, ?, ?)",
         (title, None, datetime.now().isoformat()),
@@ -250,83 +239,271 @@ def delete_commitment_task(db, commitment_id):
         db.execute("DELETE FROM tasks WHERE id=?", (row["task_id"],))
         db.commit()
 
+
 # =========================
-# Google Sheets (Service Account ONLY)
+# Google Sheets (Apps Script Web App)
 # =========================
-def get_gs_client():
+# المتغيرات المطلوبة في Render/Environment:
+#   GOOGLE_APPS_SCRIPT_URL = رابط Web App (Deploy as Web App) وينتهي /exec
+#   GOOGLE_SHEETS_TOKEN    = توكن حماية بسيط (لا تشاركه)
+#
+# ملاحظة: كل التبويبات فيها id مخفي، بنعتمد upsert/delete على العمود A دائماً.
+
+def _gs_enabled() -> bool:
+    url = (os.environ.get("GOOGLE_APPS_SCRIPT_URL") or "").strip()
+    token = (os.environ.get("GOOGLE_SHEETS_TOKEN") or "").strip()
+    return bool(url) and bool(token)
+
+
+def _gs_post(payload: dict):
     """
-    يعتمد على Service Account JSON داخل متغير البيئة:
-    GOOGLE_SERVICE_ACCOUNT_JSON = محتوى JSON كامل
-    GOOGLE_SHEETS_ID = Spreadsheet ID
+    يرسل POST إلى Apps Script Web App.
+    يرجع: (data, err)
+      data = dict (إن نجح)
+      err  = str  (إن فشل)
     """
-    sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if not sa_json:
-        return None, "missing_service_account_json"
+    if not _gs_enabled():
+        print("GS: not configured (missing GOOGLE_APPS_SCRIPT_URL or GOOGLE_SHEETS_TOKEN)")
+        return None, "gs_not_configured"
+
+    url = (os.environ.get("GOOGLE_APPS_SCRIPT_URL") or "").strip()
+    token = (os.environ.get("GOOGLE_SHEETS_TOKEN") or "").strip()
+
+    payload = dict(payload or {})
+    payload["token"] = token
 
     try:
-        creds = SA_Credentials.from_service_account_info(
-            json.loads(sa_json),
-            scopes=GOOGLE_SCOPES,
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            method="POST",
         )
-        client = gspread.authorize(creds)
-        return client, None
-    except Exception:
-        return None, "invalid_service_account_json"
+
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            status = getattr(resp, "status", 200)
+            raw = resp.read().decode("utf-8", errors="ignore").strip()
+
+        # Logging واضح في Render
+        print("GS POST ->", url, "status=", status, "resp=", raw[:500])
+
+        try:
+            data = json.loads(raw) if raw else {}
+        except Exception:
+            return None, f"invalid_json_response:{raw[:200]}"
+
+        if isinstance(data, dict) and data.get("ok") is False:
+            return None, data.get("error") or "gs_error"
+
+        return data, None
+
+    except urllib.error.HTTPError as e:
+        try:
+            msg = e.read().decode("utf-8", errors="ignore")
+        except Exception:
+            msg = str(e)
+        print("GS HTTPError", e.code, msg[:700])
+        return None, f"http_error_{e.code}:{msg}"
+
+    except urllib.error.URLError as e:
+        print("GS URLError", str(e))
+        return None, f"url_error:{e}"
+
+    except Exception as e:
+        print("GS request_failed", str(e))
+        return None, f"request_failed:{e}"
 
 
+def gs_post(action: str, tab: str, headers=None, row=None, row_id=None, rows=None):
+    """
+    Wrapper متوافق مع Apps Script الحالي:
+
+    Actions:
+      - ping
+      - ensure_headers   (headers)
+      - append           (row=list)
+      - upsert           (row=list + row_id) [keyColumn=1, keyValue=id]
+      - delete_by_id     (row_id) -> delete_by_key
+    """
+    if not tab:
+        return None, "missing_tab"
+
+    action = (action or "").strip()
+
+    if action == "ping":
+        return _gs_post({"action": "ping"})
+
+    if action == "ensure_headers":
+        payload = {
+            "action": "ensure_headers",
+            "sheet": tab,
+            "headers": [str(h).strip() for h in (headers or [])],
+        }
+        return _gs_post(payload)
+
+    if action == "append":
+        if not isinstance(row, list):
+            return None, "row_must_be_list"
+        payload = {
+            "action": "append",
+            "sheet": tab,
+            "row": ["" if v is None else str(v) for v in row],
+        }
+        return _gs_post(payload)
+
+    if action == "upsert":
+        if not isinstance(row, dict):
+            return None, "row_must_be_dict"
+        if not headers:
+            return None, "missing_headers"
+        if row_id is None:
+            return None, "missing_row_id"
+
+        headers_clean = [str(h).strip() for h in headers]
+        if not headers_clean or headers_clean[0].lower() != "id":
+            return None, "headers_must_start_with_id"
+
+        ordered = [row.get(h, "") for h in headers_clean]
+
+        payload = {
+            "action": "upsert",
+            "sheet": tab,
+            "keyColumn": 1,
+            "keyValue": str(row_id),
+            "row": ["" if v is None else str(v) for v in ordered],
+        }
+        return _gs_post(payload)
+
+    if action == "delete_by_id":
+        if row_id is None:
+            return None, "missing_row_id"
+        payload = {
+            "action": "delete_by_key",
+            "sheet": tab,
+            "keyColumn": 1,
+            "keyValue": str(row_id),
+        }
+        return _gs_post(payload)
+    if action == "replace_all":
+        if not headers:
+            return None, "missing_headers"
+        if not isinstance(rows, list):
+            return None, "rows_must_be_list"
+
+        payload = {
+            "action": "replace_all",
+            "sheet": tab,
+            "headers": [str(h).strip() for h in (headers or [])],
+            "rows": rows,
+        }
+        return _gs_post(payload)
+
+    return None, f"unknown_action:{action}"
+
+
+# =========
+# دوال توافق قديمة (حتى ما تغيّر كل المشروع)
+# =========
 def open_ws(tab_name: str):
-    """Open worksheet by tab name. Returns (ws, err)."""
-    sheet_id = os.environ.get("GOOGLE_SHEETS_ID")
-    if not sheet_id:
-        return None, "missing_sheet_id"
-
-    client, err = get_gs_client()
-    if err:
-        return None, err
-
-    sh = client.open_by_key(sheet_id)
-    try:
-        ws = sh.worksheet(tab_name)
-    except Exception:
-        return None, "worksheet_not_found"
-    return ws, None
+    if not _gs_enabled():
+        return None, "gs_not_configured"
+    if not tab_name:
+        return None, "missing_tab_name"
+    return tab_name, None
 
 
 def ws_ensure_headers(ws, headers):
-    values = ws.get_all_values()
-    if not values:
-        ws.append_row(headers)
-        return
-    if values and values[0] != headers:
-        ws.delete_rows(1)
-        ws.insert_row(headers, 1)
+    if not ws:
+        return False
+    headers = [str(h).strip() for h in (headers or []) if str(h).strip()]
+    if not headers:
+        return False
+    _, err = gs_post("ensure_headers", tab=str(ws), headers=headers)
+    if err:
+        print("ws_ensure_headers error:", err)
+        return False
+    return True
 
 
 def ws_upsert(ws, headers, row_values, row_id):
-    """Upsert by id in column A."""
-    ws_ensure_headers(ws, headers)
-    all_vals = ws.get_all_values()
+    if not ws:
+        return False
 
-    target_row = None
-    for i, r in enumerate(all_vals[1:], start=2):
-        if r and r[0] == str(row_id):
-            target_row = i
-            break
+    headers_clean = [str(h).strip() for h in (headers or [])]
+    if not headers_clean or headers_clean[0].lower() != "id":
+        print("ws_upsert error: headers must start with 'id'")
+        return False
 
-    end_col = chr(64 + len(headers))  # A,B,C...
-    if target_row:
-        ws.update(f"A{target_row}:{end_col}{target_row}", [row_values])
-    else:
-        ws.append_row(row_values)
+    if not ws_ensure_headers(ws, headers_clean):
+        return False
+
+    row_values = list(row_values or [])
+    if len(row_values) != len(headers_clean):
+        print("ws_upsert error: row_values length != headers length")
+        return False
+
+    payload = {
+        "action": "upsert",
+        "sheet": str(ws),
+        "keyColumn": 1,
+        "keyValue": str(row_id),
+        "row": ["" if v is None else str(v) for v in row_values],
+    }
+    _, err = _gs_post(payload)
+    if err:
+        print("ws_upsert error:", err)
+        return False
+    return True
 
 
 def ws_delete_by_id(ws, row_id):
-    all_vals = ws.get_all_values()
-    for i, r in enumerate(all_vals[1:], start=2):
-        if r and r[0] == str(row_id):
-            ws.delete_rows(i)
+    if not ws:
+        return False
+    data, err = gs_post("delete_by_id", tab=str(ws), row_id=row_id)
+    if err:
+        print("ws_delete_by_id error:", err)
+        return False
+
+    # يدعم أكثر من شكل للرد
+    if isinstance(data, dict):
+        if data.get("deleted") is True:
             return True
+        if data.get("ok") is True and data.get("deleted") is None:
+            # بعض السكربتات ترجع ok فقط
+            return True
+
     return False
+
+def ws_replace_all(tab_name: str, headers: list, rows: list):
+    data, err = gs_post("replace_all", tab=tab_name, headers=headers, rows=rows)
+    if err:
+        print("ws_replace_all error:", err)
+        return False
+    return True
+
+
+# =========================
+# Debug routes (مؤقتة للتشخيص)
+# =========================
+@app.route("/debug/env", methods=["GET"])
+def debug_env():
+    return {
+        "DATABASE": DATABASE,
+        "GS_ENABLED": _gs_enabled(),
+        "GOOGLE_APPS_SCRIPT_URL_set": bool((os.environ.get("GOOGLE_APPS_SCRIPT_URL") or "").strip()),
+        "GOOGLE_SHEETS_TOKEN_set": bool((os.environ.get("GOOGLE_SHEETS_TOKEN") or "").strip()),
+    }
+
+
+@app.route("/debug/gs", methods=["GET"])
+def debug_gs():
+    # Ping فقط للتأكد أن Apps Script يرد JSON
+    data, err = gs_post("ping", tab="any")
+    return {"enabled": _gs_enabled(), "data": data, "err": err}
+
+
+
 
 
 # =========================
@@ -483,7 +660,6 @@ def accounting_home():
 
 
 def ensure_daily_accounting_schema(db):
-    """Create daily accounting tables if missing (safe on existing DB)."""
     db.execute("PRAGMA foreign_keys = ON")
     db.execute(
         """
@@ -830,20 +1006,52 @@ def accounting_commitments_home():
 
     action = request.form.get("action")
 
+    GS_TAB = "tasks_commitment"
+    GS_HEADERS = ["id", "party", "amount", "created_at"]
+
     if request.method == "POST":
         if action == "add":
             party = (request.form.get("party") or "").strip()
             amount = _to_float(request.form.get("amount"), 0)
+
             if party:
                 cur = db.execute(
                     "INSERT INTO financial_commitments (party, amount) VALUES (?, ?)",
                     (party, amount),
                 )
                 db.commit()
-                create_or_update_commitment_task(db, cur.lastrowid)
+
+                cid = cur.lastrowid
+                create_or_update_commitment_task(db, cid)
+                # --- Google Sheets upsert ---
+                try:
+                    row = db.execute(
+                        "SELECT id, party, amount, created_at FROM financial_commitments WHERE id=?",
+                        (cid,),
+                    ).fetchone()
+
+                    if row:
+                        ws, err = open_ws(GS_TAB)
+                        if not err:
+                            # ✅ تأكد من الهيدرز أولاً
+                            ws_ensure_headers(ws, GS_HEADERS)
+
+                            # ✅ upsert
+                            ok = ws_upsert(
+                                ws,
+                                GS_HEADERS,
+                                [row["id"], row["party"], row["amount"], row["created_at"]],
+                                row["id"],
+                            )
+
+                            # ws_upsert لازم يرجع True/False بعد تعديل الدالة
+                            if ok is False:
+                                flash("⚠️ فشل تصدير Google Sheets (commitments/add) راجع logs", "warning")
+                except Exception as e:
+                    print("Google Sheets export (tasks_commitment/add) error:", e)
 
         elif action == "update":
-            cid = int(request.form.get("id"))
+            cid = int(request.form.get("id") or 0)
             party = (request.form.get("party") or "").strip()
             amount = _to_float(request.form.get("amount"), 0)
 
@@ -852,11 +1060,52 @@ def accounting_commitments_home():
                 (party, amount, cid),
             )
             db.commit()
+
             create_or_update_commitment_task(db, cid)
 
+            # --- Google Sheets upsert ---
+            try:
+                row = db.execute(
+                    "SELECT id, party, amount, created_at FROM financial_commitments WHERE id=?",
+                    (cid,),
+                ).fetchone()
+
+                if row:
+                    ws, err = open_ws(GS_TAB)
+                    if not err:
+                        # ✅ تأكد من الهيدرز أولاً
+                        ws_ensure_headers(ws, GS_HEADERS)
+
+                        # ✅ upsert
+                        ok = ws_upsert(
+                            ws,
+                            GS_HEADERS,
+                            [row["id"], row["party"], row["amount"], row["created_at"]],
+                            row["id"],
+                        )
+
+                        if ok is False:
+                            flash("⚠️ فشل تصدير Google Sheets (commitments/update) راجع logs", "warning")
+            except Exception as e:
+                print("Google Sheets export (tasks_commitment/update) error:", e)
+
         elif action == "delete":
-            cid = int(request.form.get("id"))
+            cid = int(request.form.get("id") or 0)
+
             delete_commitment_task(db, cid)
+
+            # --- Google Sheets delete ---
+            try:
+                ws, err = open_ws(GS_TAB)
+                if not err:
+                    deleted = ws_delete_by_id(ws, cid)  # ترجع True/False عندك
+
+                    # (اختياري) تنبيه لو ما انحذف
+                    if deleted is False:
+                        flash("⚠️ تعذر حذف الصف من Google Sheets (commitments/delete) راجع logs", "warning")
+            except Exception as e:
+                print("Google Sheets export (tasks_commitment/delete) error:", e)
+
             db.execute("DELETE FROM financial_commitments WHERE id=?", (cid,))
             db.commit()
 
@@ -866,8 +1115,6 @@ def accounting_commitments_home():
     total = float(sum([_to_float(r["amount"], 0) for r in rows]))
 
     return render_template("accounting_commitments_home.html", rows=rows, total=total)
-
-
 # =========================
 # Monthly Commission
 # =========================
@@ -956,6 +1203,9 @@ def monthly_commission():
     db = get_db()
     settings = get_monthly_commission_settings(db)
 
+    GS_TAB = "commission"
+    GS_HEADERS = ["id", "month", "sales", "total_commission", "employee_commission", "saved_at"]
+
     if request.method == "POST":
         action = (request.form.get("action") or "").strip()
 
@@ -1019,9 +1269,11 @@ def monthly_commission():
                 settings["employees_count"],
                 month,
             ))
+            db.commit()
+            row_id = int(existing["id"])
             flash("تم تعديل العمولة", "success")
         else:
-            db.execute("""
+            cur = db.execute("""
                 INSERT INTO monthly_commissions
                     (month, sales_before_tax, total_commission, employee_commission,
                      rate_snapshot, deduction_snapshot, employees_snapshot,
@@ -1036,9 +1288,34 @@ def monthly_commission():
                 settings["fixed_deduction"],
                 settings["employees_count"],
             ))
+            db.commit()
+            row_id = int(cur.lastrowid)
             flash("تم حفظ العمولة", "success")
 
-        db.commit()
+        # تصدير إلى Google Sheets
+        try:
+            r = db.execute("""
+                SELECT id, month, sales_before_tax, total_commission, employee_commission, updated_at
+                  FROM monthly_commissions
+                 WHERE id=?
+            """, (row_id,)).fetchone()
+
+            if r:
+                ws, err = open_ws(GS_TAB)
+                if not err:
+                    ok = ws_upsert(ws, GS_HEADERS, [
+                        r["id"],
+                        r["month"],
+                        r["sales_before_tax"],
+                        r["total_commission"],
+                        r["employee_commission"],
+                        r["updated_at"],
+                    ], r["id"])
+                    if not ok:
+                        flash("⚠️ فشل تصدير Google Sheets (commission) راجع logs", "warning")
+        except Exception as e:
+            print("Google Sheets export (commission) error:", e)
+
         return redirect(url_for("monthly_commission"))
 
     rows = db.execute("""
@@ -1115,32 +1392,48 @@ def record_new(kind):
 
     t = table_name(kind)
 
-    if request.method == "POST":
-        record_type = request.form.get("record_type", "").strip()
-        record_number = request.form.get("record_number", "").strip()
-        expiry_date = request.form.get("expiry_date", "").strip()
+    # ===== GET =====
+    if request.method == "GET":
+        return render_template("record_form.html", kind=kind, mode="new", row=None)
 
-        if not record_number:
-            flash("رقم السجل مطلوب", "warning")
-            return render_template("record_form.html", kind=kind, mode="new", row=None)
+    # ===== POST =====
+    record_type = request.form.get("record_type", "").strip()
+    record_number = request.form.get("record_number", "").strip()
+    expiry_date = request.form.get("expiry_date", "").strip()
 
-        db = get_db()
-        db.execute(
-            f"INSERT INTO {t} (record_type, record_number, expiry_date) VALUES (?, ?, ?)",
-            (record_type, record_number, expiry_date or None),
-        )
-        db.commit()
-        new_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+    if not record_number:
+        flash("رقم السجل مطلوب", "warning")
+        return render_template("record_form.html", kind=kind, mode="new", row=None)
 
+    db = get_db()
+    db.execute(
+        f"INSERT INTO {t} (record_type, record_number, expiry_date) VALUES (?, ?, ?)",
+        (record_type, record_number, expiry_date or None),
+    )
+    db.commit()
+    new_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    # --- Google Sheets export ---
+    try:
         ws, err = open_ws(f"records_{kind.lower()}")
         if not err:
             headers = ["id", "record_type", "record_number", "expiry_date"]
-            ws_upsert(ws, headers, [new_id, record_type, record_number, expiry_date or ""], new_id)
+            ws_ensure_headers(ws, headers)
 
-        flash("تمت الإضافة بنجاح", "success")
-        return redirect(url_for("records_list", kind=kind))
+            ok = ws_upsert(
+                ws,
+                headers,
+                [new_id, record_type, record_number, expiry_date or ""],
+                new_id
+            )
+            if ok is False:
+                print("records export failed (new):", kind, new_id)
+                flash("⚠️ فشل تصدير Google Sheets (records/new) راجع logs", "warning")
+    except Exception as e:
+        print("Google Sheets export (records/new) error:", e)
 
-    return render_template("record_form.html", kind=kind, mode="new", row=None)
+    flash("تمت الإضافة بنجاح", "success")
+    return redirect(url_for("records_list", kind=kind))
 
 
 @app.route("/records/<kind>/<int:rid>/edit", methods=["GET", "POST"])
@@ -1179,7 +1472,20 @@ def record_edit(kind, rid: int):
         ws, err = open_ws(f"records_{kind.lower()}")
         if not err:
             headers = ["id", "record_type", "record_number", "expiry_date"]
-            ws_upsert(ws, headers, [rid, record_type, record_number, expiry_date or ""], rid)
+
+            # ✅ تأكد من الهيدرز أولاً
+            ws_ensure_headers(ws, headers)
+
+            ok = ws_upsert(
+                ws,
+                headers,
+                [new_id, record_type, record_number, expiry_date or ""],
+                new_id
+            )
+            if ok is False:
+                print("records export failed (new):", kind, new_id)
+                flash("⚠️ فشل تصدير Google Sheets (records/new) راجع logs", "warning")
+
 
         flash("تم التعديل بنجاح", "success")
         return redirect(url_for("records_list", kind=kind))
@@ -1300,7 +1606,7 @@ def employee_new():
                 "insurance_name","insurance_expiry",
                 "basic_salary","commission","bank_account"
             ]
-            ws_upsert(ws, headers, [
+            ok = ws_upsert(ws, headers, [
                 new_id,
                 payload["name_ar"], payload["name_en"],
                 payload["nationality"], payload["mobile"],
@@ -1310,6 +1616,8 @@ def employee_new():
                 payload["basic_salary"] or "", payload["commission"] or "",
                 payload["bank_account"],
             ], new_id)
+            if not ok:
+                flash("⚠️ فشل تصدير Google Sheets (employees/new) راجع logs", "warning")
 
         flash("تمت إضافة الموظف", "success")
         return redirect(url_for("employees_list"))
@@ -1401,7 +1709,7 @@ def employee_edit(eid: int):
                 "insurance_name","insurance_expiry",
                 "basic_salary","commission","bank_account"
             ]
-            ws_upsert(ws, headers, [
+            ok = ws_upsert(ws, headers, [
                 eid,
                 payload["name_ar"], payload["name_en"],
                 payload["nationality"], payload["mobile"],
@@ -1411,11 +1719,14 @@ def employee_edit(eid: int):
                 payload["basic_salary"] or "", payload["commission"] or "",
                 payload["bank_account"],
             ], eid)
+            if not ok:
+                flash("⚠️ فشل تصدير Google Sheets (employees/edit) راجع logs", "warning")
 
         flash("تم تعديل بيانات الموظف", "success")
         return redirect(url_for("employee_detail", eid=eid))
 
     return render_template("employee_form.html", mode="edit", row=row)
+
 
 @app.route("/employees/<int:eid>/delete", methods=["POST"])
 @login_required
@@ -1423,7 +1734,6 @@ def employee_edit(eid: int):
 def employee_delete(eid: int):
     db = get_db()
 
-    # تأكد أن الموظف موجود
     row = db.execute("SELECT id FROM employees WHERE id=?", (eid,)).fetchone()
     if not row:
         flash("الموظف غير موجود", "warning")
@@ -1434,12 +1744,10 @@ def employee_delete(eid: int):
         db.commit()
     except Exception as e:
         db.rollback()
-        # اطبع الخطأ في اللوق (مفيد في Render)
         print("employee_delete error:", e)
         flash("تعذر حذف الموظف (راجع السجلات).", "danger")
         return redirect(url_for("employees_list"))
 
-    # حذف من Google Sheets (اختياري)
     ws, err = open_ws("employees")
     if not err:
         ws_delete_by_id(ws, eid)
@@ -1447,22 +1755,23 @@ def employee_delete(eid: int):
     flash("تم حذف الموظف", "info")
     return redirect(url_for("employees_list"))
 
+
+# =========================
+# Tasks
+# =========================
 @app.route("/tasks", methods=["GET", "POST"])
 @login_required
 @permission_required("tasks")
 def tasks():
     db = get_db()
 
-    # 0) تأكد من جدول الالتزامات (مع task_id)
+    # تأكد من جدول الالتزامات
     try:
-        # غيّر الاسم إذا دالتك اسمها مختلف
         ensure_financial_commitments_schema(db)
     except Exception as e:
         print("ensure_financial_commitments_schema error:", e)
 
-    # =========
     # إضافة مهمة يدوية
-    # =========
     if request.method == "POST":
         title = (request.form.get("title") or "").strip()
         due_date = (request.form.get("due_date") or "").strip() or None
@@ -1476,20 +1785,20 @@ def tasks():
             db.commit()
             new_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-            # تصدير Google Sheets اختياري
+            # Google Sheets (tasks_manual)
             try:
                 ws, err = open_ws("tasks_manual")
                 if not err:
                     headers = ["id", "title", "due_date", "created_at"]
-                    ws_upsert(ws, headers, [new_id, title, due_date or "", created_at], new_id)
+                    ok = ws_upsert(ws, headers, [new_id, title, due_date or "", created_at], new_id)
+                    if not ok:
+                        flash("⚠️ فشل تصدير Google Sheets (tasks_manual/add) راجع logs", "warning")
             except Exception as e:
                 print("Google Sheets export (tasks_manual) error:", e)
 
         return redirect(url_for("tasks"))
 
-    # =========
     # (A) الالتزامات المالية
-    # =========
     try:
         commitments = db.execute("""
             SELECT id, party, amount, task_id, created_at
@@ -1500,10 +1809,7 @@ def tasks():
         print("commitments fetch error:", e)
         commitments = []
 
-    # =========
-    # (B) المهام اليدوية فقط
-    #     نستبعد أي task مربوط في financial_commitments.task_id
-    # =========
+    # (B) المهام اليدوية فقط (نستبعد المرتبط بالتزامات)
     try:
         tasks_list = db.execute("""
             SELECT t.id, t.title, t.due_date, t.created_at
@@ -1519,9 +1825,7 @@ def tasks():
         print("tasks_list error:", e)
         tasks_list = []
 
-    # =========
     # (C) التنبيهات (سجلات + موظفين) ضمن 45 يوم
-    # =========
     alerts = []
     DAYS_WINDOW = 45
 
@@ -1594,12 +1898,36 @@ def tasks():
         add_emp_alert(f"انتهاء تأمين {name}", e["insurance_expiry"])
 
     alerts.sort(key=lambda x: x["expiry"] or "9999-12-31")
+    # --- تصدير tasks_auto (Snapshot) ---
+       # --- تصدير tasks_auto (Snapshot) ---
+    try:
+        headers = ["source", "name", "number", "expiry", "days_left", "color"]
+
+        rows_out = [
+            [
+                a.get("source", ""),
+                a.get("name", ""),
+                a.get("number", ""),
+                a.get("expiry", ""),
+                a.get("days_left", ""),
+                a.get("color", ""),
+            ]
+            for a in alerts
+        ]
+
+        ok = ws_replace_all("tasks_auto", headers, rows_out)
+        if not ok:
+            print("tasks_auto export failed")
+
+    except Exception as e:
+        print("tasks_auto export exception:", e)
+
 
     return render_template(
         "tasks.html",
-        tasks=tasks_list,     # مهام يدوية فقط
-        rows=alerts,          # تنبيهات
-        commitments=commitments  # التزامات
+        tasks=tasks_list,
+        rows=alerts,
+        commitments=commitments
     )
 
 
@@ -1609,7 +1937,6 @@ def tasks():
 def task_delete(tid: int):
     db = get_db()
 
-    # حماية: لا تسمح بحذف مهمة مرتبطة بالتزام مالي
     try:
         linked = db.execute(
             "SELECT 1 FROM financial_commitments WHERE task_id=? LIMIT 1",
@@ -1624,7 +1951,6 @@ def task_delete(tid: int):
     db.execute("DELETE FROM tasks WHERE id=?", (tid,))
     db.commit()
 
-    # Google Sheets اختياري
     try:
         ws, err = open_ws("tasks_manual")
         if not err:
@@ -1634,6 +1960,8 @@ def task_delete(tid: int):
 
     flash("تم حذف المهمة اليدوية", "info")
     return redirect(url_for("tasks"))
+
+
 # =========================
 # Permissions (master only)
 # =========================
@@ -1740,7 +2068,6 @@ def permissions_page():
 # =========================
 if __name__ == "__main__":
     # أول مرة فقط إذا قاعدة البيانات جديدة:
-    # شغّل init_db() مرة واحدة محليًا ثم رجّعها تعليق:
     # init_db()
 
     port = int(os.environ.get("PORT", 5000))
