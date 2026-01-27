@@ -1,124 +1,143 @@
 {% extends "base.html" %}
 {% block content %}
 
+<div class="container-fluid" style="max-width: 1100px;">
 
-<h4 class="mb-3">المهام الوظيفية الحالية</h4>
+  <!-- ===== Page Header ===== -->
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h4 class="mb-1">المهام الوظيفية الحالية</h4>
+      <div class="text-muted small">مهام يدوية + التزامات تلقائية + تنبيهات الانتهاء</div>
+    </div>
+  </div>
 
-<form method="post" class="mb-3" style="display:flex; gap:10px; align-items:center;">
-  <input type="text" name="title" placeholder="أضف مهمة يدوية" required style="flex:1; padding:10px;">
-  <input type="date" name="due_date" style="padding:10px;">
-  <button type="submit" style="padding:10px 16px;">حفظ</button>
-</form>
-<h5 class="mt-3"></h5>
+  <!-- ===== Add manual task ===== -->
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <form method="post" class="row g-2 align-items-end">
+        <div class="col-12 col-md-6">
+          <label class="form-label">مهمة يدوية</label>
+          <input type="text" name="title" class="form-control" placeholder="أضف مهمة يدوية" required>
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label">تاريخ (اختياري)</label>
+          <input type="date" name="due_date" class="form-control">
+        </div>
+        <div class="col-12 col-md-3 d-grid">
+          <button type="submit" class="btn btn-primary">حفظ</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
-<table class="table table-bordered text-center align-middle">
-  <thead class="table-dark">
-
-    <tr>
-      <th>المهمة</th>
-      <th>التاريخ</th>
-      <th>إجراء</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for t in tasks %}
-    <tr>
-      <td>{{ t["title"] }}</td>
-      <td>{{ t["due_date"] or "-" }}</td>
-      <td>
-        <form method="post" action="{{ url_for('task_delete', tid=t['id']) }}"
-              onsubmit="return confirm('حذف المهمة؟');" style="display:inline;">
-          <button type="submit" class="btn btn-danger btn-sm">حذف</button>
-        </form>
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-
-{% if not tasks %}
-  <p class="text-muted">لا توجد مهام يدوية.</p>
-{% endif %}
-
-{% if session.perms and session.perms.get('financial_commitments') %}
-  <hr class="my-4">
-
-  <h5 class="mb-3">الالتزامات المالية (تلقائية)</h5>
-
-  <div class="table-responsive">
-    <table class="table table-striped table-hover align-middle">
+  <!-- ===== Manual tasks table ===== -->
+  <div class="table-wrap table-responsive mb-3">
+    <table class="table table-hover align-middle mb-0">
       <thead>
         <tr>
-          <th>جهة الالتزام</th>
-          <th style="width:220px;">المبلغ</th>
-          <th style="width:220px;">تاريخ الإضافة</th>
+          <th>المهمة</th>
+          <th style="width:160px;">التاريخ</th>
+          <th style="width:140px;">إجراء</th>
         </tr>
       </thead>
       <tbody>
-        {% if commitments|length == 0 %}
-          <tr>
-            <td colspan="3" class="text-center text-muted py-3">لا توجد التزامات مالية</td>
-          </tr>
+        {% if tasks|length == 0 %}
+          <tr><td colspan="3" class="text-center text-muted py-4">لا توجد مهام يدوية.</td></tr>
         {% endif %}
 
-        {% for c in commitments %}
+        {% for t in tasks %}
         <tr>
-          <td class="fw-semibold">{{ c.party }}</td>
-<td>
-  <div class="d-inline-flex align-items-center gap-1">
-    <span class="fw-semibold">{{ '%.2f'|format(c.amount or 0) }}</span>
-    <span class="riyal-icon">
-      <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
-    </span>
-  </div>
-</td>
-
-
-          <td class="text-muted small">{{ c.created_at }}</td>
+          <td class="fw-semibold">{{ t["title"] }}</td>
+          <td>{{ t["due_date"] or "-" }}</td>
+          <td>
+            <form method="post"
+                  action="{{ url_for('task_delete', tid=t['id']) }}"
+                  onsubmit="return confirm('حذف المهمة؟');"
+                  class="m-0 d-flex justify-content-center">
+              <button type="submit" class="btn btn-sm btn-outline-danger">حذف</button>
+            </form>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-{% endif %}
 
-<hr>
+  <!-- ===== Financial commitments (auto) ===== -->
+  {% if session.perms and session.perms.get('financial_commitments') %}
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3 mb-2">
+      <h5 class="m-0">الالتزامات المالية (تلقائية)</h5>
+    </div>
 
+    <div class="table-wrap table-responsive mb-3">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th>جهة الالتزام</th>
+            <th style="width:200px;">المبلغ</th>
+            <th style="width:220px;">تاريخ الإضافة</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if commitments|length == 0 %}
+            <tr><td colspan="3" class="text-center text-muted py-4">لا توجد التزامات مالية</td></tr>
+          {% endif %}
 
-<table class="table table-bordered text-center align-middle">
-  <thead class="table-dark">
+          {% for c in commitments %}
+          <tr>
+            <td class="fw-semibold">{{ c.party }}</td>
+            <td>
+              <div class="d-inline-flex align-items-center gap-1">
+                <span class="fw-semibold">{{ '%.2f'|format(c.amount or 0) }}</span>
+                <span class="riyal-icon">
+                  <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+                </span>
+              </div>
+            </td>
+            <td class="text-muted small">{{ c.created_at }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
 
-    <tr>
-      <th>الموقع</th>
-      <th>المهمة</th>
-      <th>الرقم</th>
-      <th>تاريخ الانتهاء</th>
-      <th>المتبقي (يوم)</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for r in rows %}
-    <tr class="{{ r.color }}">
-      <td>{{ r.source }}</td>
-      <td>{{ r.name }}</td>
-      <td>{{ r.number or "-" }}</td>
-      <td>{{ r.expiry or "-" }}</td>
-      <td>{{ r.days_left }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-                                                                                                      
-{% if not rows %}
-<p class="text-muted">لا توجد مهام حالية.</p>
-{% endif %}
-<a href="/connect-google">ربط Google Sheets</a>
-<div style="display:flex; gap:10px; margin-bottom:12px;">
-  <a href="/connect-google" class="btn btn-primary">ربط Google</a>
+  <!-- ===== Alerts (records + employees) ===== -->
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3 mb-2">
+    <h5 class="m-0">التنبيهات (تلقائية)</h5>
 
-  <form method="post" action="/export-sheets" style="margin:0;">
-    <button type="submit" class="btn btn-success">تصدير إلى Google Sheets</button>
-  </form>
+   
+  </div>
+
+  <div class="table-wrap table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>الموقع</th>
+          <th>المهمة</th>
+          <th style="width:160px;">الرقم</th>
+          <th style="width:160px;">تاريخ الانتهاء</th>
+          <th style="width:140px;">المتبقي (يوم)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if rows|length == 0 %}
+          <tr><td colspan="5" class="text-center text-muted py-4">لا توجد مهام حالية.</td></tr>
+        {% endif %}
+
+        {% for r in rows %}
+        <tr class="{{ r.color }}">
+          <td class="fw-semibold">{{ r.source }}</td>
+          <td>{{ r.name }}</td>
+          <td>{{ r.number or "-" }}</td>
+          <td>{{ r.expiry or "-" }}</td>
+          <td class="fw-semibold">{{ r.days_left }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
 </div>
 
 {% endblock %}

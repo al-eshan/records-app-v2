@@ -1,6 +1,9 @@
-/* =========================
-   Premium UI (Background + Sidebar + Tables)
-========================= */
+/* =========================================================
+   Premium UI – Desktop + Mobile (Stable Version)
+   Compatible with base.html + mobile sidebar
+========================================================= */
+
+/* ---------- Root variables ---------- */
 :root{
   --sidebar-w: 280px;
   --sidebar-bg: #1f242a;
@@ -9,40 +12,38 @@
   --card-bg-hover: #343a42;
   --card-active: #1e6bff;
 
-  /* Glass surfaces */
   --glass: rgba(31,36,42,.58);
   --glass-strong: rgba(31,36,42,.72);
   --glass-border: rgba(255,255,255,.12);
   --glass-shadow: 0 18px 40px rgba(0,0,0,.22);
 
-  /* Table head */
   --thead-bg: rgba(0,0,0,.78);
   --thead-border: rgba(255,255,255,.12);
 
-  /* Background image sizing */
   --bg-size-desktop: 1200px;
   --bg-size-1200: 900px;
   --bg-size-768: 650px;
 }
 
-html, body { height: 100%; }
+/* ---------- Base ---------- */
+html, body{
+  height: 100%;
+}
 
-body{
+body.app-shell{
   margin: 0;
   min-height: 100vh;
   font-family: system-ui, -apple-system, "Segoe UI", Tahoma, Arial;
   background-color: #e6e6e6;
+  position: relative;
 }
 
-/* =========================
-   ONE fixed background for ALL pages
-========================= */
-body::before{
+/* ---------- Fixed background ---------- */
+body.app-shell::before{
   content:"";
   position: fixed;
   inset: 0;
   z-index: -2;
-
   background-image: url("/static/img/background.png");
   background-repeat: no-repeat;
   background-attachment: fixed;
@@ -50,15 +51,14 @@ body::before{
   background-size: var(--bg-size-desktop) auto;
 }
 
-@media (max-width: 1200px){
-  body::before{ background-size: var(--bg-size-1200) auto; }
+@media (max-width:1200px){
+  body.app-shell::before{ background-size: var(--bg-size-1200) auto; }
 }
-@media (max-width: 768px){
-  body::before{ background-size: var(--bg-size-768) auto; }
+@media (max-width:768px){
+  body.app-shell::before{ background-size: var(--bg-size-768) auto; }
 }
 
-/* Overlay خفيف */
-body::after{
+body.app-shell::after{
   content:"";
   position: fixed;
   inset: 0;
@@ -66,9 +66,9 @@ body::after{
   background: rgba(255,255,255,.02);
 }
 
-/* =========================
-   Sidebar (القائمة السوداء)
-========================= */
+/* =========================================================
+   Sidebar
+========================================================= */
 .sidebar{
   position: fixed;
   top: 0;
@@ -79,7 +79,7 @@ body::after{
   color: #fff;
   display: flex;
   flex-direction: column;
-  z-index: 1000;
+  z-index: 1300;
 }
 
 .sidebar-header{
@@ -95,7 +95,6 @@ body::after{
 }
 .brand small{
   font-size: 12px;
-  font-weight: 500;
   opacity: .8;
 }
 
@@ -104,7 +103,6 @@ body::after{
   display: flex;
   flex-direction: column;
   gap: 14px;
-  overflow: hidden;
 }
 
 .menu-card{
@@ -127,47 +125,91 @@ body::after{
   padding: 16px;
   border-top: 1px solid rgba(255,255,255,.08);
 }
-.menu-card.danger{ background: #8b1d1d; }
-.menu-card.danger:hover{ background: #b32626; }
 
-/* Content area */
+.menu-card.danger{ background:#8b1d1d; }
+.menu-card.danger:hover{ background:#b32626; }
+
+/* =========================================================
+   Main content
+========================================================= */
 .main-content{
-  margin-right: var(--sidebar-w);
   min-height: 100vh;
+  margin-right: var(--sidebar-w);
 }
 
-.no-sidebar .sidebar{ display:none !important; }
-.no-sidebar .main-content{ margin-right:0 !important; }
+@media (max-width:767.98px){
+  .main-content{
+    margin-right: 0;
+    padding-top: 56px;
+  }
+}
 
-/* =========================
-   Premium Glass Containers
-========================= */
+/* =========================================================
+   Mobile sidebar (off-canvas)
+========================================================= */
+.mobile-menu-btn{
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 1400;
+  border-radius: 10px;
+}
+
+@media (max-width:767.98px){
+  .sidebar{
+    right: -320px;
+    transition: right .25s ease;
+  }
+  .sidebar.open{
+    right: 0;
+  }
+
+  .sidebar-backdrop{
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.45);
+    z-index: 1200;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease;
+  }
+  .sidebar-backdrop.show{
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* =========================================================
+   Cards (Glass)
+========================================================= */
 .card{
   background: var(--glass) !important;
   border: 1px solid var(--glass-border) !important;
   box-shadow: var(--glass-shadow);
   border-radius: 16px;
-  overflow: hidden;
   backdrop-filter: blur(8px);
 }
 
 .card-header{
   background: rgba(0,0,0,.78) !important;
   color: #fff !important;
-  border-bottom: 1px solid rgba(255,255,255,.10) !important;
   font-weight: 900;
 }
 
-.card-body{ color: #fff; }
+.card-body{
+  color: #fff;
+}
 
+/* Alerts */
 .alert{
   background: var(--glass-strong) !important;
   border: 1px solid var(--glass-border) !important;
   color: #fff !important;
-  backdrop-filter: blur(8px);
 }
 
-/* Inputs */
+/* =========================================================
+   Forms
+========================================================= */
 .form-control,
 .form-select{
   background: rgba(255,255,255,.10) !important;
@@ -175,7 +217,9 @@ body::after{
   color: #fff !important;
   border-radius: 12px;
 }
-.form-control::placeholder{ color: rgba(255,255,255,.65) !important; }
+.form-control::placeholder{
+  color: rgba(255,255,255,.65) !important;
+}
 
 .form-control:focus,
 .form-select:focus{
@@ -189,9 +233,9 @@ body::after{
   font-weight: 800;
 }
 
-/* =========================
-   Tiles (Accounting / Records)
-========================= */
+/* =========================================================
+   Tiles
+========================================================= */
 .page-tiles{
   max-width: 1100px;
   margin: 0 auto;
@@ -204,82 +248,53 @@ body::after{
   margin-bottom: 16px;
 }
 
-.page-titlebar h3{
-  margin: 0;
-  font-weight: 700;
-  color: #111;
-}
-
 .tiles-grid{
   display: grid;
-  grid-template-columns: repeat(3, minmax(0,1fr));
+  grid-template-columns: repeat(3,1fr);
   gap: 14px;
 }
 
-@media (max-width: 992px){
-  .tiles-grid{ grid-template-columns: repeat(2, minmax(0,1fr)); }
+@media (max-width:992px){
+  .tiles-grid{ grid-template-columns: repeat(2,1fr); }
 }
-@media (max-width: 576px){
+@media (max-width:576px){
   .tiles-grid{ grid-template-columns: 1fr; }
 }
 
-/* Tile */
 .tile-card{
+  min-height: 110px;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  text-decoration: none;
   text-align: center;
-
   padding: 26px 12px;
   border-radius: 16px;
-
   background: var(--glass) !important;
   border: 1px solid var(--glass-border) !important;
   box-shadow: var(--glass-shadow);
-
   color: #fff;
   backdrop-filter: blur(8px);
-  transition: transform .15s ease, background .15s ease;
-
-  min-height: 110px;
+  transition: .15s ease;
+  text-decoration: none;
 }
-
 .tile-card:hover{
   transform: translateY(-3px);
   background: rgba(31,36,42,.85) !important;
-  color: #fff;
 }
 
 .tile-title{
   font-weight: 900;
   font-size: 18px;
-  margin-bottom: 6px;
-  color: #fff !important;
 }
-
 .tile-sub{
   font-size: 13px;
   opacity: .85;
-  color: rgba(255,255,255,.85) !important;
 }
 
-/* توحيد محاذاة البلاطات */
-.tile-card.tile-center{
-  align-items: center;
-}
-.tile-card.tile-center .tile-title,
-.tile-card.tile-center .tile-sub{
-  width: 100%;
-  text-align: center;
-}
-
-/* =========================
-   PREMIUM TABLES
-========================= */
+/* =========================================================
+   Tables
+========================================================= */
 .table{
-  border-collapse: separate;
-  border-spacing: 0;
   background: transparent !important;
 }
 .table>:not(caption)>*>*{
@@ -288,165 +303,37 @@ body::after{
 
 .table-wrap{
   background: var(--glass) !important;
-  border: 1px solid var(--glass-border) !important;
   border-radius: 16px;
-  box-shadow: var(--glass-shadow);
   overflow: hidden;
-  backdrop-filter: blur(8px);
 }
 
 .table thead th{
   background: var(--thead-bg) !important;
   color: #fff !important;
-  border-bottom: 1px solid var(--thead-border) !important;
   font-weight: 900;
   text-align: center;
-  vertical-align: middle;
 }
 
-.table tbody td, .table tbody th{
-  color: #000000;
-  border-bottom: 1px solid rgba(255,255,255,.08) !important;
+.table tbody td{
+  color: #111;
   text-align: center;
-  vertical-align: middle;
 }
 
-.table-hover tbody tr:hover > *{
-  background: rgba(255,255,255,.06) !important;
-}
+/* Status colors */
+.bg-blue{ background: rgba(157,195,230,.35) !important; }
+.bg-green{ background: rgba(169,209,142,.35) !important; }
+.bg-yellow{ background: rgba(255,217,102,.35) !important; }
+.bg-red{ background: rgba(255,124,128,.35) !important; }
 
-/* Status tints */
-.bg-blue   { --tint: rgba(157,195,230,.35); }
-.bg-green  { --tint: rgba(169,209,142,.35); }
-.bg-yellow { --tint: rgba(255,217,102,.35); }
-.bg-red    { --tint: rgba(255,124,128,.35); }
-
-.table tr.bg-blue  > td,
-.table tr.bg-green > td,
-.table tr.bg-yellow> td,
-.table tr.bg-red   > td{
-  background: var(--tint) !important;
-  color: #111 !important;
-  font-weight: 700;
-}
-
-/* =========================
-   Mobile input direction
-========================= */
+/* =========================================================
+   Utilities
+========================================================= */
 .mobile-input{
   direction:ltr;
   text-align:left;
   font-weight:600;
-  letter-spacing:1px;
-}
-.mobile-input::placeholder{
-  color: rgba(255,255,255,.65);
-  font-weight: 600;
 }
 
-/* Riyal badge */
-.currency-badge{
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  min-width: 46px;
-  padding: 0 10px;
-  background: rgba(255,255,255,.10);
-  border: 1px solid rgba(255,255,255,.10);
-  color: #fff;
-}
-.currency-badge img{
-  height: 18px;
-  width: auto;
-  display:block;
-  filter: drop-shadow(0 2px 6px rgba(0,0,0,.35));
-}
-
-.riyal-icon {
-  background: transparent !important;
-  border: none !important;
-  padding: 5px !important;
-}
-.riyal-icon img {
-  background: transparent !important;
-  display: block;
+.riyal-icon img{
   height: 18px;
 }
-
-/* Totals card */
-.totals-card {
-  background: #f8f9fa !important;
-}
-.totals-card,
-.totals-card * {
-  color: #111 !important;
-  opacity: 1 !important;
-  filter: none !important;
-  text-shadow: none !important;
-}
-.totals-card .text-muted,
-.totals-card .small {
-  color: #6c757d !important;
-}
-.totals-card .text-danger {
-  color: #dc3545 !important;
-}
-
-/* =========================
-   Responsive Sidebar (Mobile Off-canvas)
-========================= */
-@media (min-width: 768px){
-  .sidebar{
-    right: 0;
-    width: var(--sidebar-w);
-  }
-  .main-content{
-    margin-right: var(--sidebar-w);
-  }
-}
-
-@media (max-width: 767.98px){
-  .mobile-menu-btn{
-    position: fixed;
-    top: 10px;
-    right: 10px;
-    z-index: 1200;
-    border-radius: 10px;
-  }
-
-  .main-content{
-    margin-right: 0;
-    padding-top: 56px;
-  }
-
-  .sidebar{
-    right: -320px;
-    width: var(--sidebar-w);
-    transition: right .25s ease;
-    z-index: 1300;
-  }
-  .sidebar.open{ right: 0; }
-
-  .sidebar-backdrop{
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,.45);
-    z-index: 1250;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity .2s ease;
-  }
-  .sidebar-backdrop.show{
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
-
-/* Tables on mobile */
-.table-responsive,
-.table-wrap{
-  width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-table{ width: 100%; }

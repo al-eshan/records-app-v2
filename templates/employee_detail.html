@@ -1,56 +1,82 @@
 {% extends "base.html" %}
 {% block content %}
-<h4 class="mb-3">تفاصيل الموظف</h4>
 
-<div class="card shadow-sm">
-  <div class="card-body">
-    <p><b>الاسم بالعربي:</b> {{ row.name_ar }}</p>
-    <p><b>الاسم بالإنجليزي:</b> {{ row.name_en or "-" }}</p>
-<tr>
-  <th>الجنسية</th>
-  <td>{{ row.nationality }}</td>
-</tr>
+<div class="container" style="max-width: 900px;">
+  <h4 class="mb-3">تفاصيل الموظف</h4>
 
-<tr>
-  <th>رقم الجوال</th>
-  <td>{{ row.mobile }}</td>
-</tr>
+  <div class="card shadow-sm">
+    <div class="card-body">
 
-    <hr>
-
-    <div class="row g-3">
-      <div class="col-md-4">
-        <div class="p-3 rounded {{ status_color(row.passport_expiry) }}">
-          <b>الجواز</b><br>
-          رقم: {{ row.passport_no or "-" }}<br>
-          انتهاء: {{ row.passport_expiry or "-" }}
+      <!-- Basic Info -->
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-md-6">
+          <p><b>الاسم بالعربي:</b><br>{{ row.name_ar }}</p>
+        </div>
+        <div class="col-12 col-md-6">
+          <p><b>الاسم بالإنجليزي:</b><br>{{ row.name_en or "-" }}</p>
+        </div>
+        <div class="col-12 col-md-6">
+          <p><b>الجنسية:</b><br>{{ row.nationality or "-" }}</p>
+        </div>
+        <div class="col-12 col-md-6">
+          <p><b>رقم الجوال:</b><br>{{ row.mobile or "-" }}</p>
         </div>
       </div>
-      <div class="col-md-4">
-        <div class="p-3 rounded {{ status_color(row.iqama_expiry) }}">
-          <b>الإقامة</b><br>
-          رقم: {{ row.iqama_no or "-" }}<br>
-          انتهاء: {{ row.iqama_expiry or "-" }}
+
+      <hr>
+
+      <!-- Status Cards -->
+      <div class="row g-3">
+        <div class="col-12 col-md-4">
+          <div class="p-3 rounded {{ status_color(row.passport_expiry) }}">
+            <b>الجواز</b><br>
+            رقم: {{ row.passport_no or "-" }}<br>
+            انتهاء: {{ row.passport_expiry or "-" }}
+          </div>
+        </div>
+
+        <div class="col-12 col-md-4">
+          <div class="p-3 rounded {{ status_color(row.iqama_expiry) }}">
+            <b>الإقامة</b><br>
+            رقم: {{ row.iqama_no or "-" }}<br>
+            انتهاء: {{ row.iqama_expiry or "-" }}
+          </div>
+        </div>
+
+        <div class="col-12 col-md-4">
+          <div class="p-3 rounded {{ status_color(row.insurance_expiry) }}">
+            <b>التأمين</b><br>
+            اسم: {{ row.insurance_name or "-" }}<br>
+            انتهاء: {{ row.insurance_expiry or "-" }}
+          </div>
         </div>
       </div>
-      <div class="col-md-4">
-        <div class="p-3 rounded {{ status_color(row.insurance_expiry) }}">
-          <b>التأمين</b><br>
-          اسم: {{ row.insurance_name or "-" }}<br>
-          انتهاء: {{ row.insurance_expiry or "-" }}
+
+      <hr>
+
+      <!-- Financial Info -->
+      <div class="row g-3">
+        <div class="col-12 col-md-4">
+          <p><b>الراتب الأساسي:</b><br>{{ row.basic_salary if row.basic_salary is not none else "-" }}</p>
+        </div>
+        <div class="col-12 col-md-4">
+          <p><b>العمولة:</b><br>{{ row.commission if row.commission is not none else "-" }}</p>
+        </div>
+        <div class="col-12 col-md-4">
+          <p><b>رقم الحساب البنكي:</b><br>{{ row.bank_account or "-" }}</p>
         </div>
       </div>
-    </div>
 
-    <hr>
-    <p><b>الراتب الأساسي:</b> {{ row.basic_salary if row.basic_salary is not none else "-" }}</p>
-    <p><b>العمولة:</b> {{ row.commission if row.commission is not none else "-" }}</p>
-<p><b>رقم الحساب البنكي:</b> {{ row.bank_account or "-" }}</p>
+      <hr>
 
-    <div class="mt-3 d-flex gap-2">
-      <a href="/employees/{{ row.id }}/edit" class="btn btn-warning">تعديل</a>
-      <a href="/employees" class="btn btn-secondary">رجوع</a>
+      <!-- Actions -->
+      <div class="d-flex gap-2 flex-wrap">
+        <a href="/employees/{{ row.id }}/edit" class="btn btn-warning">تعديل</a>
+        <a href="/employees" class="btn btn-secondary">رجوع</a>
+      </div>
+
     </div>
   </div>
 </div>
+
 {% endblock %}

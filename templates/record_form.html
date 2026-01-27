@@ -1,19 +1,51 @@
 {% extends "base.html" %}
 {% block content %}
-<h4>{{ "إضافة" if mode=="new" else "تعديل" }} سجل {{ kind }}</h4>
-<form method="post">
-  <div class="mb-3">
-    <label>نوع السجل</label>
-    <input name="record_type" class="form-control" value="{{ row.record_type if row }}">
+
+<div class="container py-3" style="max-width: 900px;">
+  <div class="card shadow-sm">
+    <div class="card-body p-4">
+
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+          <h4 class="mb-1">{{ "إضافة" if mode=="new" else "تعديل" }} سجل {{ kind }}</h4>
+          <div class="text-muted small">عبّئ البيانات ثم اضغط حفظ</div>
+        </div>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('records_list', kind=kind) }}">↩ رجوع</a>
+      </div>
+
+      <hr>
+
+      <form method="post" class="row g-3">
+
+        <div class="col-12 col-md-6">
+          <label class="form-label">نوع السجل</label>
+          <input name="record_type" class="form-control"
+                 placeholder="مثال: سجل تجاري / رخصة / عقد..."
+                 value="{{ row.record_type if row }}">
+        </div>
+
+        <div class="col-12 col-md-6">
+          <label class="form-label">رقم السجل *</label>
+          <input name="record_number" class="form-control" required
+                 placeholder="أدخل رقم السجل"
+                 value="{{ row.record_number if row }}">
+        </div>
+
+        <div class="col-12 col-md-6">
+          <label class="form-label">تاريخ الانتهاء</label>
+          <input type="date" name="expiry_date" class="form-control"
+                 value="{{ row.expiry_date if row }}">
+        </div>
+
+        <div class="col-12 d-flex gap-2 flex-wrap mt-2">
+          <button class="btn btn-primary">حفظ</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('records_list', kind=kind) }}">إلغاء</a>
+        </div>
+
+      </form>
+
+    </div>
   </div>
-  <div class="mb-3">
-    <label>رقم السجل</label>
-    <input name="record_number" class="form-control" required value="{{ row.record_number if row }}">
-  </div>
-  <div class="mb-3">
-    <label>تاريخ الانتهاء</label>
-    <input type="date" name="expiry_date" class="form-control" value="{{ row.expiry_date if row }}">
-  </div>
-  <button class="btn btn-primary">حفظ</button>
-</form>
+</div>
+
 {% endblock %}

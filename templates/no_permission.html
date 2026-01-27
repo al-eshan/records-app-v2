@@ -1,12 +1,28 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="container" style="max-width: 900px;">
-  <div class="card shadow-sm">
-    <div class="card-body p-4 text-center">
-      <h4 class="mb-2">ليس لديك الصلاحية للدخول لهذه الصفحة</h4>
-      <p class="text-muted mb-3">إذا كنت تعتقد أن هذا خطأ، تواصل مع مدير النظام.</p>
-      <a class="btn btn-dark" href="{{ url_for('home') }}">العودة للرئيسية</a>
+
+<div class="container py-4">
+  <div class="row justify-content-center">
+    <div class="col-12 col-md-8 col-lg-6">
+      <div class="card shadow-sm">
+        <div class="card-body p-4 text-center">
+
+          <div class="mb-3" style="font-size:40px;">⛔</div>
+
+          <h4 class="mb-2">ليس لديك الصلاحية للدخول لهذه الصفحة</h4>
+          <p class="text-muted mb-3">
+            إذا كنت تعتقد أن هذا خطأ، تواصل مع مدير النظام.
+          </p>
+
+          <div class="d-flex gap-2 justify-content-center flex-wrap">
+            <a class="btn btn-dark" href="{{ url_for('home') }}">العودة للرئيسية</a>
+            <a class="btn btn-outline-secondary" href="javascript:history.back()">رجوع</a>
+          </div>
+
+        </div>
+      </div>
     </div>
   </div>
 </div>
+
 {% endblock %}

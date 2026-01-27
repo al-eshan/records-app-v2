@@ -2,12 +2,13 @@
 {% block content %}
 
 <div class="content-card">
-<div class="text-center">
-  <h5 class="mb-2">مؤسسة ال عشان لقطع غيار السيارات</h5>
-  <h5 class="mb-2">Al Eshan Auto Parts Establishment</h5>
-</div>
 
- <h2>أهلاً بك 👋</h2>
+  <div class="text-center">
+    <h5 class="mb-2">مؤسسة ال عشان لقطع غيار السيارات</h5>
+    <h5 class="mb-2">Al Eshan Auto Parts Establishment</h5>
+  </div>
+
+  <h2 class="mt-3">أهلاً بك 👋</h2>
   <p>
     مرحبًا بك في نظام المحاسبة المالية والسجلات والموظفين ومتابعة المهام الخاص بـ
     <strong>ال عِشان لقطع غيار السيارات</strong>
@@ -20,14 +21,15 @@
 
   <!-- ===== صورة العرض ===== -->
   <div class="mt-4">
-
     <div class="offer-image-box">
       <img
-  src="{{ url_for('static', filename='img/offers/offer.png') }}"
-  alt="عرض">
-
+        src="{{ url_for('static', filename='img/offers/offer.png') }}"
+        alt="عرض"
+        class="img-fluid"
+      >
     </div>
   </div>
- 
+
+</div>
 
 {% endblock %}

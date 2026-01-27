@@ -2,27 +2,31 @@
 {% block content %}
 
 <div class="page-tiles">
-  <div class="page-titlebar">
-    <h3>السجلات</h3>
-    <span class="text-muted">اختر القسم</span>
+
+  <div class="page-titlebar flex-wrap gap-2">
+    <div>
+      <h3 class="mb-1">السجلات</h3>
+      <div class="text-muted small">اختر القسم</div>
+    </div>
   </div>
 
   <div class="tiles-grid">
-    <a href="{{ url_for('records_list', kind='ES1') }}" class="tile-card">
+    <a href="{{ url_for('records_list', kind='ES1') }}" class="tile-card tile-center">
       <div class="tile-title">سجلات ES1</div>
       <div class="tile-sub">فتح سجلات ES1</div>
     </a>
 
-    <a href="{{ url_for('records_list', kind='ES2') }}" class="tile-card">
+    <a href="{{ url_for('records_list', kind='ES2') }}" class="tile-card tile-center">
       <div class="tile-title">سجلات ES2</div>
       <div class="tile-sub">فتح سجلات ES2</div>
     </a>
 
-    <a href="{{ url_for('records_list', kind='ES3') }}" class="tile-card">
+    <a href="{{ url_for('records_list', kind='ES3') }}" class="tile-card tile-center">
       <div class="tile-title">سجلات ES3</div>
       <div class="tile-sub">فتح سجلات ES3</div>
     </a>
   </div>
+
 </div>
 
 {% endblock %}

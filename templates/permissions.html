@@ -1,25 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
 
+<div class="container py-4" style="max-width: 1100px;">
 
-
-<div class="container" style="max-width: 1100px;">
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <!-- Header -->
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <h3 class="m-0">الصلاحيات</h3>
     <span class="text-muted">للمستخدم الرئيسي فقط ({{ master }})</span>
   </div>
 
+  <!-- Add user -->
   <div class="card shadow-sm mb-4">
     <div class="card-header bg-dark text-white">إضافة مستخدم جديد</div>
     <div class="card-body">
-      <form method="post" class="row g-2">
+      <form method="post" class="row g-2 align-items-end">
         <input type="hidden" name="action" value="add_user">
+
         <div class="col-12 col-md-4">
+          <label class="form-label mb-1">اسم المستخدم</label>
           <input class="form-control" name="new_username" placeholder="اسم المستخدم" required>
         </div>
+
         <div class="col-12 col-md-4">
+          <label class="form-label mb-1">كلمة المرور</label>
           <input class="form-control" name="new_password" placeholder="كلمة المرور" required>
         </div>
+
         <div class="col-12 col-md-4">
           <button class="btn btn-primary w-100">إضافة</button>
         </div>
@@ -27,15 +33,17 @@
     </div>
   </div>
 
+  <!-- Users -->
   {% for u in users %}
   <div class="card shadow-sm mb-3">
-    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center flex-wrap gap-2">
       <div class="fw-bold">{{ u.username }}</div>
 
       <form method="post" class="m-0">
         <input type="hidden" name="action" value="delete_user">
         <input type="hidden" name="uid" value="{{ u.id }}">
-        <button class="btn btn-sm btn-danger" {% if u.username == master %}disabled{% endif %}>
+        <button class="btn btn-sm btn-danger"
+                {% if u.username == master %}disabled{% endif %}>
           حذف
         </button>
       </form>
@@ -46,11 +54,12 @@
         <input type="hidden" name="action" value="update_user">
         <input type="hidden" name="uid" value="{{ u.id }}">
 
-        <div class="row g-2 mb-3 align-items-center">
+        <div class="row g-2 mb-3 align-items-end">
           <div class="col-12 col-md-4">
-            <input class="form-control" name="password" placeholder="تغيير كلمة المرور (اختياري)">
+            <label class="form-label mb-1">تغيير كلمة المرور (اختياري)</label>
+            <input class="form-control" name="password" placeholder="اتركها فارغة إذا ما تبغى تغيير">
           </div>
-          <div class="col-12 col-md-8 text-muted">
+          <div class="col-12 col-md-8 text-muted small">
             ضع علامة ✓ على الصفحات المسموح بها ثم اضغط حفظ
           </div>
         </div>
@@ -59,21 +68,27 @@
           {% for k in perm_keys %}
           <div class="col-6 col-md-4 col-lg-3">
             <div class="form-check">
-              <input class="form-check-input" type="checkbox" name="perm_{{k}}" id="p{{u.id}}_{{k}}"
+              <input class="form-check-input"
+                     type="checkbox"
+                     name="perm_{{k}}"
+                     id="p{{u.id}}_{{k}}"
                      {% if user_perms.get(u.id, {}).get(k) %}checked{% endif %}>
-              <label class="form-check-label" for="p{{u.id}}_{{k}}">{{ labels.get(k, k) }}</label>
+              <label class="form-check-label" for="p{{u.id}}_{{k}}">
+                {{ labels.get(k, k) }}
+              </label>
             </div>
           </div>
           {% endfor %}
         </div>
 
-        <div class="mt-3">
-          <button class="btn btn-success">حفظ الصلاحيات</button>
+        <div class="mt-3 d-grid d-md-inline-block">
+          <button class="btn btn-success w-100 w-md-auto">حفظ الصلاحيات</button>
         </div>
       </form>
     </div>
   </div>
   {% endfor %}
+
 </div>
 
 {% endblock %}

@@ -1,89 +1,120 @@
 {% extends "base.html" %}
 {% block content %}
-<h4>{{ "إضافة" if mode=="new" else "تعديل" }} موظف</h4>
 
-<form method="post">
-  <div class="row g-3">
+<div class="container" style="max-width: 900px;">
+  <h4 class="mb-3">{{ "إضافة" if mode=="new" else "تعديل" }} موظف</h4>
 
-    <div class="col-md-6">
-      <label class="form-label">الاسم بالعربي *</label>
-      <input name="name_ar" class="form-control" required value="{{ row.name_ar if row }}">
-    </div>
-    <div class="col-md-6">
-      <label class="form-label">الاسم بالإنجليزي</label>
-      <input name="name_en" class="form-control" value="{{ row.name_en if row }}">
-    </div>
-<div class="col-md-4">
-  <label class="form-label">الجنسية</label>
-  <input name="nationality" class="form-control"
-         value="{{ row.nationality if row }}">
-</div>
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <form method="post">
+        <div class="row g-3">
 
-<div class="col-md-4">
-  <label class="form-label">رقم الجوال</label>
-  <input
-    type="tel"
-    name="mobile"
-    class="form-control mobile-input"
-    placeholder="05xxxxxxxx"
-    pattern="^05[0-9]{8}$"
-    title="رقم الجوال يجب أن يبدأ بـ 05 ويتكون من 10 أرقام"
-    value="{{ row.mobile if row }}"
-  >
-</div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">الاسم بالعربي *</label>
+            <input name="name_ar" class="form-control" required
+                   value="{{ row.name_ar if row else '' }}">
+          </div>
 
+          <div class="col-12 col-md-6">
+            <label class="form-label">الاسم بالإنجليزي</label>
+            <input name="name_en" class="form-control"
+                   value="{{ row.name_en if row else '' }}">
+          </div>
 
-    <div class="col-md-4">
-      <label class="form-label">رقم الجواز</label>
-      <input name="passport_no" class="form-control" value="{{ row.passport_no if row }}">
-    </div>
-    <div class="col-md-4">
-      <label class="form-label">انتهاء الجواز</label>
-      <input type="date" name="passport_expiry" class="form-control" value="{{ row.passport_expiry if row }}">
-    </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">الجنسية</label>
+            <input name="nationality" class="form-control"
+                   value="{{ row.nationality if row else '' }}">
+          </div>
 
-    <div class="col-md-4">
-      <label class="form-label">رقم الإقامة</label>
-      <input name="iqama_no" class="form-control" value="{{ row.iqama_no if row }}">
-    </div>
-    <div class="col-md-4">
-      <label class="form-label">انتهاء الإقامة</label>
-      <input type="date" name="iqama_expiry" class="form-control" value="{{ row.iqama_expiry if row }}">
-    </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">رقم الجوال</label>
+            <input
+              type="tel"
+              name="mobile"
+              class="form-control mobile-input"
+              placeholder="05xxxxxxxx"
+              pattern="^05[0-9]{8}$"
+              inputmode="numeric"
+              maxlength="10"
+              title="رقم الجوال يجب أن يبدأ بـ 05 ويتكون من 10 أرقام"
+              value="{{ row.mobile if row else '' }}"
+            >
+            <div class="form-text">مثال: 05xxxxxxxx</div>
+          </div>
 
-    <div class="col-md-4">
-      <label class="form-label">التأمين</label>
-      <input name="insurance_name" class="form-control" value="{{ row.insurance_name if row }}">
-    </div>
-    <div class="col-md-4">
-      <label class="form-label">انتهاء التأمين</label>
-      <input type="date" name="insurance_expiry" class="form-control" value="{{ row.insurance_expiry if row }}">
-    </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">رقم الجواز</label>
+            <input name="passport_no" class="form-control"
+                   value="{{ row.passport_no if row else '' }}">
+          </div>
 
-    <div class="col-md-4">
-      <label class="form-label">الراتب الأساسي</label>
-      <input type="number" step="0.01" name="basic_salary" class="form-control" value="{{ row.basic_salary if row }}">
-    </div>
-    <div class="col-md-4">
-      <label class="form-label">العمولة</label>
-      <input type="number" step="0.01" name="commission" class="form-control" value="{{ row.commission if row }}">
-    </div>
-<div class="col-md-4">
-  <label class="form-label">رقم الحساب البنكي</label>
-  <input
-    type="text"
-    name="bank_account"
-    class="form-control"
-    placeholder="IBAN أو رقم الحساب"
-    value="{{ row.bank_account if row }}"
-  >
-</div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">انتهاء الجواز</label>
+            <input type="date" name="passport_expiry" class="form-control"
+                   value="{{ row.passport_expiry if row else '' }}">
+          </div>
 
+          <div class="col-12 col-md-4">
+            <label class="form-label">رقم الإقامة</label>
+            <input name="iqama_no" class="form-control"
+                   value="{{ row.iqama_no if row else '' }}">
+          </div>
+
+          <div class="col-12 col-md-4">
+            <label class="form-label">انتهاء الإقامة</label>
+            <input type="date" name="iqama_expiry" class="form-control"
+                   value="{{ row.iqama_expiry if row else '' }}">
+          </div>
+
+          <div class="col-12 col-md-4">
+            <label class="form-label">التأمين</label>
+            <input name="insurance_name" class="form-control"
+                   value="{{ row.insurance_name if row else '' }}">
+          </div>
+
+          <div class="col-12 col-md-4">
+            <label class="form-label">انتهاء التأمين</label>
+            <input type="date" name="insurance_expiry" class="form-control"
+                   value="{{ row.insurance_expiry if row else '' }}">
+          </div>
+
+          <div class="col-12 col-md-4">
+            <label class="form-label">الراتب الأساسي</label>
+            <input type="number" step="0.01" min="0"
+                   name="basic_salary" class="form-control"
+                   value="{{ row.basic_salary if row and row.basic_salary is not none else '' }}">
+          </div>
+
+          <div class="col-12 col-md-4">
+            <label class="form-label">العمولة</label>
+            <input type="number" step="0.01" min="0"
+                   name="commission" class="form-control"
+                   value="{{ row.commission if row and row.commission is not none else '' }}">
+          </div>
+
+          <div class="col-12 col-md-4">
+            <label class="form-label">رقم الحساب البنكي</label>
+            <input
+              type="text"
+              name="bank_account"
+              class="form-control"
+              placeholder="IBAN أو رقم الحساب"
+              value="{{ row.bank_account if row else '' }}"
+            >
+          </div>
+
+        </div>
+
+        <hr class="my-4">
+
+        <div class="d-flex gap-2 flex-wrap">
+          <button class="btn btn-primary">حفظ</button>
+          <a href="/employees" class="btn btn-secondary">رجوع</a>
+        </div>
+      </form>
+    </div>
   </div>
+</div>
 
-  <div class="mt-3">
-    <button class="btn btn-primary">حفظ</button>
-    <a href="/employees" class="btn btn-secondary">رجوع</a>
-  </div>
-</form>
 {% endblock %}
