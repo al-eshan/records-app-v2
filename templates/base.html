@@ -1,13 +1,11 @@
 <body>
 
   {% if session.get("logged_in") %}
+    <!-- زر قائمة للجوال -->
+    <button class="btn btn-dark d-md-none mobile-menu-btn" type="button" onclick="toggleSidebar()">
+      ☰ القائمة
+    </button>
 
-  <!-- زر قائمة للجوال -->
-  <button class="btn btn-dark d-md-none mobile-menu-btn" type="button" onclick="toggleSidebar()">
-    ☰ القائمة
-  </button>
-
-  <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <div class="brand">
@@ -64,42 +62,31 @@
     <!-- طبقة تغطية للجوال -->
     <div class="sidebar-backdrop d-md-none" id="sidebarBackdrop" onclick="toggleSidebar()"></div>
 
-    <main class="main-content">
-      <div class="container-fluid py-3">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            <div class="mb-3">
-              {% for category, msg in messages %}
-                <div class="alert alert-{{ category }} mb-2">{{ msg }}</div>
-              {% endfor %}
-            </div>
-          {% endif %}
-        {% endwith %}
-
-        {% block content %}{% endblock %}
-      </div>
-    </main>
-  </div>
-
-  <script>
-    function toggleSidebar() {
-      const sb = document.getElementById('sidebar');
-      const bd = document.getElementById('sidebarBackdrop');
-      if (!sb || !bd) return;
-      sb.classList.toggle('open');
-      bd.classList.toggle('show');
-    }
-  </script>
-
-  {% else %}
+    <script>
+      function toggleSidebar() {
+        const sb = document.getElementById('sidebar');
+        const bd = document.getElementById('sidebarBackdrop');
+        if (!sb || !bd) return;
+        sb.classList.toggle('open');
+        bd.classList.toggle('show');
+      }
+    </script>
+  {% endif %}
 
   <main class="main-content">
     <div class="container-fluid py-3">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="mb-3">
+            {% for category, msg in messages %}
+              <div class="alert alert-{{ category }} mb-2">{{ msg }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
       {% block content %}{% endblock %}
     </div>
   </main>
 
-  {% endif %}
-
 </body>
-
