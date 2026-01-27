@@ -31,13 +31,11 @@ body{
   margin: 0;
   min-height: 100vh;
   font-family: system-ui, -apple-system, "Segoe UI", Tahoma, Arial;
-  background-color: #e6e6e6; /* لون داعم */
+  background-color: #e6e6e6;
 }
 
 /* =========================
-   ONE fixed background for ALL pages (حتى الطويلة)
-   - ثابتة
-   - لا تتمدد مع طول الصفحة
+   ONE fixed background for ALL pages
 ========================= */
 body::before{
   content:"";
@@ -48,11 +46,7 @@ body::before{
   background-image: url("/static/img/background.png");
   background-repeat: no-repeat;
   background-attachment: fixed;
-
-  /* ثبت الشعار أسفل يسار (عدّلها لو تبي center bottom) */
   background-position: left bottom;
-
-  /* لا تخليها cover عشان ما تكبر بشكل مزعج */
   background-size: var(--bg-size-desktop) auto;
 }
 
@@ -63,7 +57,7 @@ body::before{
   body::before{ background-size: var(--bg-size-768) auto; }
 }
 
-/* طبقة شفافة خفيفة (اختياري) */
+/* Overlay خفيف */
 body::after{
   content:"";
   position: fixed;
@@ -148,13 +142,6 @@ body::after{
 /* =========================
    Premium Glass Containers
 ========================= */
-
-.container,
-.container-fluid{
-  /* متعمد نتركها فاضية */
-}
-
-/* ===== Glass Card ===== */
 .card{
   background: var(--glass) !important;
   border: 1px solid var(--glass-border) !important;
@@ -171,11 +158,8 @@ body::after{
   font-weight: 900;
 }
 
-.card-body{
-  color: #fff;
-}
+.card-body{ color: #fff; }
 
-/* Alerts */
 .alert{
   background: var(--glass-strong) !important;
   border: 1px solid var(--glass-border) !important;
@@ -183,7 +167,7 @@ body::after{
   backdrop-filter: blur(8px);
 }
 
-/* ===== Inputs ===== */
+/* Inputs */
 .form-control,
 .form-select{
   background: rgba(255,255,255,.10) !important;
@@ -191,10 +175,7 @@ body::after{
   color: #fff !important;
   border-radius: 12px;
 }
-
-.form-control::placeholder{
-  color: rgba(255,255,255,.65) !important;
-}
+.form-control::placeholder{ color: rgba(255,255,255,.65) !important; }
 
 .form-control:focus,
 .form-select:focus{
@@ -202,7 +183,7 @@ body::after{
   border-color: rgba(30,107,255,.45) !important;
 }
 
-/* ===== Buttons ===== */
+/* Buttons */
 .btn{
   border-radius: 12px;
   font-weight: 800;
@@ -211,7 +192,6 @@ body::after{
 /* =========================
    Tiles (Accounting / Records)
 ========================= */
-
 .page-tiles{
   max-width: 1100px;
   margin: 0 auto;
@@ -237,19 +217,17 @@ body::after{
 }
 
 @media (max-width: 992px){
-  .tiles-grid{
-    grid-template-columns: repeat(2, minmax(0,1fr));
-  }
+  .tiles-grid{ grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
 @media (max-width: 576px){
-  .tiles-grid{
-    grid-template-columns: 1fr;
-  }
+  .tiles-grid{ grid-template-columns: 1fr; }
 }
 
-/* ===== Tile Button ===== */
+/* Tile */
 .tile-card{
-  display: block;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   text-decoration: none;
   text-align: center;
 
@@ -263,6 +241,8 @@ body::after{
   color: #fff;
   backdrop-filter: blur(8px);
   transition: transform .15s ease, background .15s ease;
+
+  min-height: 110px;
 }
 
 .tile-card:hover{
@@ -275,54 +255,37 @@ body::after{
   font-weight: 900;
   font-size: 18px;
   margin-bottom: 6px;
+  color: #fff !important;
 }
 
 .tile-sub{
   font-size: 13px;
   opacity: .85;
-}
-/* ===== FIX: اجبار بلاطات المحاسبة تكون نفس السجلات تمامًا ===== */
-
-/* خلي البلاطة بنفس الارتفاع والشكل */
-.tile-card{
-  min-height: 110px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  color: rgba(255,255,255,.85) !important;
 }
 
-/* لو فيه text-muted داخل البلاطة (Bootstrap) نخليه أبيض مثل السجلات */
-.tile-card .text-muted,
-.tile-card .tile-sub{
-  color: rgba(0,0,0,.78) !important;
+/* توحيد محاذاة البلاطات */
+.tile-card.tile-center{
+  align-items: center;
 }
-
-/* العنوان أبيض واضح */
-.tile-card .tile-title{
-  color: #fff !important;
+.tile-card.tile-center .tile-title,
+.tile-card.tile-center .tile-sub{
+  width: 100%;
+  text-align: center;
 }
-
-
-}
-
 
 /* =========================
-   PREMIUM TABLES (شفافة + رأس أسود)
+   PREMIUM TABLES
 ========================= */
-
-/* اجعل كل خلايا bootstrap table شفافة */
 .table{
   border-collapse: separate;
   border-spacing: 0;
   background: transparent !important;
 }
-
-/* override قوي لـ bootstrap 5 */
 .table>:not(caption)>*>*{
   background-color: transparent !important;
 }
 
-/* لفافة/إطار الجدول (Glass) */
 .table-wrap{
   background: var(--glass) !important;
   border: 1px solid var(--glass-border) !important;
@@ -332,7 +295,6 @@ body::after{
   backdrop-filter: blur(8px);
 }
 
-/* رأس الجدول فخم */
 .table thead th{
   background: var(--thead-bg) !important;
   color: #fff !important;
@@ -342,23 +304,18 @@ body::after{
   vertical-align: middle;
 }
 
-/* صفوف الجدول: شفافة + فاصل ناعم */
 .table tbody td, .table tbody th{
-  color: #000000; /* عشان يبان فوق الخلفية */
+  color: #000000;
   border-bottom: 1px solid rgba(255,255,255,.08) !important;
   text-align: center;
   vertical-align: middle;
 }
 
-/* Hover لطيف */
 .table-hover tbody tr:hover > *{
   background: rgba(255,255,255,.06) !important;
 }
 
-/* =========================
-   Status colors as “tint overlay”
-   (تظهر بدون تشويش + الصفوف تظل شفافة)
-========================= */
+/* Status tints */
 .bg-blue   { --tint: rgba(157,195,230,.35); }
 .bg-green  { --tint: rgba(169,209,142,.35); }
 .bg-yellow { --tint: rgba(255,217,102,.35); }
@@ -369,17 +326,8 @@ body::after{
 .table tr.bg-yellow> td,
 .table tr.bg-red   > td{
   background: var(--tint) !important;
-  color: #111 !important; /* النص أسود واضح فوق التظليل */
+  color: #111 !important;
   font-weight: 700;
-}
-
-/* خلك على نفس رأس الجدول (ما يتلوّن) */
-.table thead tr.bg-blue > th,
-.table thead tr.bg-green > th,
-.table thead tr.bg-yellow > th,
-.table thead tr.bg-red > th{
-  background: var(--thead-bg) !important;
-  color: #fff !important;
 }
 
 /* =========================
@@ -391,8 +339,12 @@ body::after{
   font-weight:600;
   letter-spacing:1px;
 }
-.mobile-input::placeholder{ color: rgba(255,255,255,.65); font-weight:; }
-/* Riyal icon inside input-group */
+.mobile-input::placeholder{
+  color: rgba(255,255,255,.65);
+  font-weight: 600;
+}
+
+/* Riyal badge */
 .currency-badge{
   display:flex;
   align-items:center;
@@ -409,72 +361,22 @@ body::after{
   display:block;
   filter: drop-shadow(0 2px 6px rgba(0,0,0,.35));
 }
-/* أيقونة الريال بدون خلفية */
+
 .riyal-icon {
   background: transparent !important;
   border: none !important;
-  padding: 5 !important;
+  padding: 5px !important;
 }
-
 .riyal-icon img {
   background: transparent !important;
   display: block;
   height: 18px;
 }
-/* =========================
-   Unified Tile Alignment
-   (سجلات + محاسبة + عمولة)
-========================= */
 
-.tile-card.tile-center{
-  display: flex;
-  flex-direction: column;
-  justify-content: center;   /* عمودي */
-  align-items: center;       /* أفقي */
-  text-align: center;        /* النص */
-}
-
-/* العنوان */
-.tile-card.tile-center .tile-title{
-  width: 100%;
-  text-align: center;
-}
-
-/* الوصف */
-.tile-card.tile-center .tile-sub{
-  width: 100%;
-  text-align: center;
-}
-.premium-table tbody td{
-  color: #fff !important;
-  font-weight: 700;
-}
-/* ===== إجماليات المحاسبة اليومية ===== */
-.totals-box,
-.totals-box input,
-.totals-box span {
-    background-color: #f5f5f5;   /* رمادي فاتح */
-    color: #111 !important;      /* أسود واضح */
-    font-weight: bold;
-}
-
-.totals-box {
-    border: 1px solid #000;
-    padding: 10px;
-    margin-top: 15px;
-    border-radius: 6px;
-}
-
-.totals-box input {
-    border: none;
-    background: transparent;
-    text-align: center;
-}
-/* ===== Fix totals numbers color/opacity ===== */
+/* Totals card */
 .totals-card {
-  background: #f8f9fa !important; /* نفس bg-light */
+  background: #f8f9fa !important;
 }
-
 .totals-card,
 .totals-card * {
   color: #111 !important;
@@ -482,39 +384,27 @@ body::after{
   filter: none !important;
   text-shadow: none !important;
 }
-
-/* خَلِّ العناوين الصغيرة رمادي */
 .totals-card .text-muted,
 .totals-card .small {
   color: #6c757d !important;
 }
-
-/* رقم الخطأ أحمر */
 .totals-card .text-danger {
   color: #dc3545 !important;
 }
-/* === Layout Shell === */
-.app-shell{
-  min-height: 100vh;
-}
 
-/* Desktop: sidebar ثابت + محتوى مزاح */
+/* =========================
+   Responsive Sidebar (Mobile Off-canvas)
+========================= */
 @media (min-width: 768px){
   .sidebar{
-    position: fixed;
-    top: 0;
     right: 0;
-    width: 280px;
-    height: 100vh;
-    overflow-y: auto;
-    z-index: 1000;
+    width: var(--sidebar-w);
   }
   .main-content{
-    margin-right: 280px;
+    margin-right: var(--sidebar-w);
   }
 }
 
-/* Mobile: sidebar off-canvas */
 @media (max-width: 767.98px){
   .mobile-menu-btn{
     position: fixed;
@@ -523,23 +413,20 @@ body::after{
     z-index: 1200;
     border-radius: 10px;
   }
+
   .main-content{
     margin-right: 0;
-    padding-top: 56px; /* مساحة للزر */
+    padding-top: 56px;
   }
+
   .sidebar{
-    position: fixed;
-    top: 0;
-    right: -320px; /* مخفية */
-    width: 280px;
-    height: 100vh;
-    overflow-y: auto;
-    z-index: 1300;
+    right: -320px;
+    width: var(--sidebar-w);
     transition: right .25s ease;
+    z-index: 1300;
   }
-  .sidebar.open{
-    right: 0; /* تظهر */
-  }
+  .sidebar.open{ right: 0; }
+
   .sidebar-backdrop{
     position: fixed;
     inset: 0;
@@ -562,6 +449,4 @@ body::after{
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
-table{
-  width: 100%;
-}
+table{ width: 100%; }
