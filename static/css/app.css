@@ -493,3 +493,75 @@ body::after{
 .totals-card .text-danger {
   color: #dc3545 !important;
 }
+/* === Layout Shell === */
+.app-shell{
+  min-height: 100vh;
+}
+
+/* Desktop: sidebar ثابت + محتوى مزاح */
+@media (min-width: 768px){
+  .sidebar{
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 280px;
+    height: 100vh;
+    overflow-y: auto;
+    z-index: 1000;
+  }
+  .main-content{
+    margin-right: 280px;
+  }
+}
+
+/* Mobile: sidebar off-canvas */
+@media (max-width: 767.98px){
+  .mobile-menu-btn{
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 1200;
+    border-radius: 10px;
+  }
+  .main-content{
+    margin-right: 0;
+    padding-top: 56px; /* مساحة للزر */
+  }
+  .sidebar{
+    position: fixed;
+    top: 0;
+    right: -320px; /* مخفية */
+    width: 280px;
+    height: 100vh;
+    overflow-y: auto;
+    z-index: 1300;
+    transition: right .25s ease;
+  }
+  .sidebar.open{
+    right: 0; /* تظهر */
+  }
+  .sidebar-backdrop{
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.45);
+    z-index: 1250;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease;
+  }
+  .sidebar-backdrop.show{
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Tables on mobile */
+.table-responsive,
+.table-wrap{
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+table{
+  width: 100%;
+}
