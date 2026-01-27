@@ -4,8 +4,8 @@
 <div class="page-tiles">
 
   <!-- ===== Title ===== -->
-  <div class="page-titlebar">
-    <h3>عمولة المبيعات الشهرية</h3>
+  <div class="page-titlebar flex-wrap gap-2">
+    <h3 class="m-0">عمولة المبيعات الشهرية</h3>
     <div class="text-muted">حفظ + تعديل + استعراض الأشهر السابقة</div>
   </div>
 
@@ -69,9 +69,8 @@
                  name="sales" id="mcSales"
                  class="form-control" required>
           <span class="input-group-text riyal-icon">
-  <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
-</span>
-
+            <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+          </span>
         </div>
       </div>
 
@@ -80,9 +79,8 @@
         <div class="input-group">
           <input type="text" id="mcTotal" class="form-control" readonly>
           <span class="input-group-text riyal-icon">
-  <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
-</span>
-
+            <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+          </span>
         </div>
       </div>
 
@@ -90,14 +88,13 @@
         <label class="form-label text-white-50">عمولة الموظف</label>
         <div class="input-group">
           <input type="text" id="mcEmp" class="form-control" readonly>
-         <span class="input-group-text riyal-icon">
-  <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
-</span>
-
+          <span class="input-group-text riyal-icon">
+            <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+          </span>
         </div>
       </div>
 
-      <div class="col-12 d-flex gap-2">
+      <div class="col-12 d-flex gap-2 flex-wrap">
         <button class="btn btn-success">حفظ / تعديل</button>
         <button type="button" class="btn btn-outline-light" id="mcClearBtn">
           تفريغ
@@ -110,7 +107,8 @@
   <div class="tile-card mt-3" style="cursor: default;">
     <div class="tile-title">الأشهر المحفوظة</div>
 
-    <div class="table-wrap">
+    <!-- ✅ مهم للجوال -->
+    <div class="table-wrap table-responsive">
       <table class="table table-hover align-middle text-center premium-table mb-0">
         <thead class="table-dark">
           <tr>
@@ -169,10 +167,19 @@
     employees: {{ settings.employees_count|tojson }}
   };
 
+  function n(v){
+    const x = parseFloat((v ?? "").toString().replace(/,/g,''));
+    return isNaN(x) ? 0 : x;
+  }
+
   function calc(){
-    const sales = parseFloat(salesEl.value || 0);
-    const total = sales * SETTINGS.rate;
-    const emp   = (total - SETTINGS.deduction) / Math.max(1, SETTINGS.employees);
+    const sales = n(salesEl.value);
+    const total = sales * n(SETTINGS.rate);
+
+    // لا نخليها سالبة (لو الخصم أكبر من العمولة)
+    const empRaw = (total - n(SETTINGS.deduction)) / Math.max(1, n(SETTINGS.employees));
+    const emp = Math.max(0, empRaw);
+
     totalEl.value = total.toFixed(2);
     empEl.value   = emp.toFixed(2);
   }
@@ -180,22 +187,24 @@
   salesEl.addEventListener('input', calc);
 
   document.querySelectorAll('.mcEditBtn').forEach(btn=>{
-    btn.onclick = ()=>{
-      monthEl.value = btn.dataset.month;
-      salesEl.value = btn.dataset.sales;
+    btn.addEventListener('click', ()=>{
+      monthEl.value = btn.dataset.month || "";
+      salesEl.value = btn.dataset.sales || "";
       calc();
       window.scrollTo({top:0, behavior:'smooth'});
-    };
+    });
   });
 
-  clearBtn.onclick = ()=>{
+  clearBtn.addEventListener('click', ()=>{
     monthEl.value = "";
     salesEl.value = "";
     totalEl.value = "";
     empEl.value = "";
-  };
+  });
+
+  // أول تحميل (لو فيه قيمة)
+  calc();
 })();
 </script>
 
 {% endblock %}
-
