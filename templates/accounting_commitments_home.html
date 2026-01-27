@@ -20,11 +20,13 @@
       <!-- إضافة جديد -->
       <form method="post" class="row g-2 align-items-end mb-3">
         <input type="hidden" name="action" value="add">
-        <div class="col-md-7">
+
+        <div class="col-12 col-md-7">
           <label class="form-label">جهة الالتزام</label>
           <input type="text" class="form-control" name="party" placeholder="مثال: إيجار / مورد / قسط ..." required>
         </div>
-        <div class="col-md-3">
+
+        <div class="col-12 col-md-3">
           <label class="form-label">المبلغ</label>
           <div class="input-group">
             <input type="number" step="0.01" class="form-control amount-live" name="amount" placeholder="0">
@@ -33,78 +35,102 @@
             </span>
           </div>
         </div>
-        <div class="col-md-2 d-grid">
+
+        <div class="col-12 col-md-2 d-grid">
           <button class="btn btn-primary" type="submit">إضافة</button>
         </div>
       </form>
 
-      <div class="table-responsive">
-        <table class="table table-striped table-hover align-middle">
-          <thead>
-            <tr>
-              <th>جهة الالتزام</th>
-              <th style="width:220px;">المبلغ</th>
-              <th style="width:220px;"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {% if rows|length == 0 %}
-              <tr><td colspan="3" class="text-center text-muted py-4">لا توجد التزامات</td></tr>
-            {% endif %}
+      <!-- لفافة زجاجية للجدول -->
+      <div class="table-wrap">
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle m-0">
+            <thead>
+              <tr>
+                <th>جهة الالتزام</th>
+                <th style="width:220px;">المبلغ</th>
+                <th style="width:220px;">الإجراءات</th>
+              </tr>
+            </thead>
 
-            {% for r in rows %}
-            <tr data-row="{{ r.id }}">
-              <td>
-                <input type="text" class="form-control form-control-sm party-input" value="{{ r.party }}" readonly>
-              </td>
-              <td>
-                <div class="input-group input-group-sm">
-                  <input type="number" step="0.01" class="form-control form-control-sm amount-input amount-live"
-                         value="{{ '%.2f'|format(r.amount or 0) }}" readonly>
-                  <span class="input-group-text riyal-icon">
-                    <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
-                  </span>
-                </div>
-              </td>
-              <td class="d-flex gap-2">
-                <button type="button" class="btn btn-outline-warning btn-sm btn-edit">تعديل</button>
+            <tbody>
+              {% if rows|length == 0 %}
+                <tr><td colspan="3" class="text-center text-muted py-4">لا توجد التزامات</td></tr>
+              {% endif %}
 
-                <form method="post" class="m-0 d-inline-flex gap-2">
-                  <input type="hidden" name="action" value="update">
-                  <input type="hidden" name="id" value="{{ r.id }}">
-                  <input type="hidden" name="party" class="party-hidden">
-                  <input type="hidden" name="amount" class="amount-hidden">
-                  <button type="submit" class="btn btn-success btn-sm btn-save" disabled>حفظ</button>
-                </form>
+              {% for r in rows %}
+              <tr data-row="{{ r.id }}">
+                <td>
+                  <input type="text" class="form-control form-control-sm party-input" value="{{ r.party }}" readonly>
+                </td>
 
-                <form method="post" class="m-0">
-                  <input type="hidden" name="action" value="delete">
-                  <input type="hidden" name="id" value="{{ r.id }}">
-                  <button type="submit" class="btn btn-outline-danger btn-sm"
-                          onclick="return confirm('حذف هذا الالتزام؟');">حذف</button>
-                </form>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
+                <td>
+                  <div class="input-group input-group-sm">
+                    <input type="number" step="0.01"
+                           class="form-control form-control-sm amount-input amount-live"
+                           value="{{ '%.2f'|format(r.amount or 0) }}" readonly>
+                    <span class="input-group-text riyal-icon">
+                      <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+                    </span>
+                  </div>
+                </td>
 
-          <tfoot>
-            <tr>
-              <td class="fw-bold">المجموع</td>
-              <td>
-                <div class="input-group input-group-sm">
-                  <input class="form-control form-control-sm fw-bold" id="sum-total"
-                         value="{{ '%.2f'|format(total) }}" readonly>
-                  <span class="input-group-text riyal-icon">
-                    <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
-                  </span>
-                </div>
-              </td>
-              <td></td>
-            </tr>
-          </tfoot>
-        </table>
+                <td>
+                  <!-- الأزرار: مرنة وتتحول عمودي بالجوال -->
+                  <div class="d-flex flex-wrap gap-2 justify-content-center actions-wrap">
+                    <button type="button" class="btn btn-outline-warning btn-sm btn-edit">تعديل</button>
+
+                    <form method="post" class="m-0 d-inline-flex gap-2">
+                      <input type="hidden" name="action" value="update">
+                      <input type="hidden" name="id" value="{{ r.id }}">
+                      <input type="hidden" name="party" class="party-hidden">
+                      <input type="hidden" name="amount" class="amount-hidden">
+                      <button type="submit" class="btn btn-success btn-sm btn-save" disabled>حفظ</button>
+                    </form>
+
+                    <form method="post" class="m-0">
+                      <input type="hidden" name="action" value="delete">
+                      <input type="hidden" name="id" value="{{ r.id }}">
+                      <button type="submit" class="btn btn-outline-danger btn-sm"
+                              onclick="return confirm('حذف هذا الالتزام؟');">حذف</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+
+            <tfoot>
+              <tr>
+                <td class="fw-bold">المجموع</td>
+                <td>
+                  <div class="input-group input-group-sm">
+                    <input class="form-control form-control-sm fw-bold" id="sum-total"
+                           value="{{ '%.2f'|format(total) }}" readonly>
+                    <span class="input-group-text riyal-icon">
+                      <img src="{{ url_for('static', filename='img/riyal.png') }}" alt="SAR">
+                    </span>
+                  </div>
+                </td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </div>
+
+      <style>
+        /* تحسين إجراءات الجوال */
+        @media (max-width: 576px){
+          .actions-wrap{
+            flex-direction: column;
+            align-items: stretch;
+          }
+          .actions-wrap .btn{
+            width: 100%;
+          }
+        }
+      </style>
 
     </div>
   </div>
@@ -112,6 +138,7 @@
 
 <script>
 function toFloat(v){ const n=parseFloat(v); return isNaN(n)?0:n; }
+
 function recalcSum(){
   let total = 0;
   document.querySelectorAll('.amount-live').forEach(el => total += toFloat(el.value));
@@ -128,10 +155,11 @@ document.addEventListener('click', (e) => {
     const amount = tr.querySelector('.amount-input');
     const saveBtn = tr.querySelector('.btn-save');
 
-    party.readOnly = false;
-    amount.readOnly = false;
-    saveBtn.disabled = false;
-    party.focus();
+    if(party) party.readOnly = false;
+    if(amount) amount.readOnly = false;
+    if(saveBtn) saveBtn.disabled = false;
+
+    if(party) party.focus();
   }
 });
 
