@@ -1,9 +1,11 @@
 /* =========================================================
-   Premium UI – Desktop + Mobile (Stable Version)
-   Compatible with base.html + mobile sidebar
+   Al-Eshan – Premium UI (Desktop + iPhone Safe)
+   FINAL app.css (Mobile + iPhone polished, Desktop unchanged)
 ========================================================= */
 
-/* ---------- Root variables ---------- */
+/* =========================
+   Root variables
+========================= */
 :root{
   --sidebar-w: 280px;
   --sidebar-bg: #1f242a;
@@ -25,50 +27,58 @@
   --bg-size-768: 650px;
 }
 
-/* ---------- Base ---------- */
+/* =========================
+   Base
+========================= */
 html, body{
   height: 100%;
 }
 
-body.app-shell{
+body{
   margin: 0;
   min-height: 100vh;
   font-family: system-ui, -apple-system, "Segoe UI", Tahoma, Arial;
   background-color: #e6e6e6;
-  position: relative;
-}
-
-/* ---------- Fixed background ---------- */
-body.app-shell::before{
-  content:"";
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  background-image: url("/static/img/background.png");
-  background-repeat: no-repeat;
-  background-attachment: fixed;
-  background-position: left bottom;
-  background-size: var(--bg-size-desktop) auto;
-}
-
-@media (max-width:1200px){
-  body.app-shell::before{ background-size: var(--bg-size-1200) auto; }
-}
-@media (max-width:768px){
-  body.app-shell::before{ background-size: var(--bg-size-768) auto; }
-}
-
-body.app-shell::after{
-  content:"";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: rgba(255,255,255,.02);
 }
 
 /* =========================================================
-   Sidebar
+   ✅ Background layer (FIXED – works on iPhone)
+   (يستبدل body::before)
 ========================================================= */
+.app-bg{
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+
+  background-image: url("/static/img/background.png");
+  background-repeat: no-repeat;
+  background-position: left bottom;
+  background-size: var(--bg-size-desktop) auto;
+
+  /* iOS stability */
+  transform: translateZ(0);
+  will-change: transform;
+  pointer-events: none;
+}
+
+@media (max-width: 1200px){
+  .app-bg{ background-size: var(--bg-size-1200) auto; }
+}
+@media (max-width: 768px){
+  .app-bg{ background-size: var(--bg-size-768) auto; }
+}
+
+/* Overlay خفيف */
+.app-bg::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  background: rgba(255,255,255,.02);
+}
+
+/* =========================
+   Sidebar
+========================= */
 .sidebar{
   position: fixed;
   top: 0;
@@ -79,7 +89,7 @@ body.app-shell::after{
   color: #fff;
   display: flex;
   flex-direction: column;
-  z-index: 1300;
+  z-index: 1000;
 }
 
 .sidebar-header{
@@ -125,16 +135,32 @@ body.app-shell::after{
   padding: 16px;
   border-top: 1px solid rgba(255,255,255,.08);
 }
-
 .menu-card.danger{ background:#8b1d1d; }
 .menu-card.danger:hover{ background:#b32626; }
 
-/* =========================================================
+/* =========================
    Main content
-========================================================= */
+========================= */
 .main-content{
   min-height: 100vh;
-  margin-right: var(--sidebar-w);
+}
+
+/* Desktop: نفس وضعك تمام */
+@media (min-width:768px){
+  .main-content{
+    margin-right: var(--sidebar-w);
+  }
+}
+
+/* =========================
+   Mobile sidebar (off-canvas)
+========================= */
+.mobile-menu-btn{
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 1200;
+  border-radius: 10px;
 }
 
 @media (max-width:767.98px){
@@ -142,33 +168,19 @@ body.app-shell::after{
     margin-right: 0;
     padding-top: 56px;
   }
-}
 
-/* =========================================================
-   Mobile sidebar (off-canvas)
-========================================================= */
-.mobile-menu-btn{
-  position: fixed;
-  top: 10px;
-  right: 10px;
-  z-index: 1400;
-  border-radius: 10px;
-}
-
-@media (max-width:767.98px){
   .sidebar{
     right: -320px;
     transition: right .25s ease;
+    z-index: 1300;
   }
-  .sidebar.open{
-    right: 0;
-  }
+  .sidebar.open{ right:0; }
 
   .sidebar-backdrop{
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,.45);
-    z-index: 1200;
+    z-index: 1250;
     opacity: 0;
     pointer-events: none;
     transition: opacity .2s ease;
@@ -179,161 +191,294 @@ body.app-shell::after{
   }
 }
 
-/* =========================================================
-   Cards (Glass)
-========================================================= */
+/* =========================
+   Cards / Glass
+========================= */
 .card{
   background: var(--glass) !important;
   border: 1px solid var(--glass-border) !important;
   box-shadow: var(--glass-shadow);
   border-radius: 16px;
   backdrop-filter: blur(8px);
+  overflow: hidden;
 }
-
 .card-header{
   background: rgba(0,0,0,.78) !important;
-  color: #fff !important;
-  font-weight: 900;
+  color:#fff !important;
+  font-weight:900;
 }
+.card-body{ color:#fff; }
 
-.card-body{
-  color: #fff;
-}
-
-/* Alerts */
 .alert{
   background: var(--glass-strong) !important;
   border: 1px solid var(--glass-border) !important;
-  color: #fff !important;
+  color:#fff !important;
 }
 
-/* =========================================================
-   Forms
-========================================================= */
+/* =========================
+   Inputs
+========================= */
 .form-control,
 .form-select{
   background: rgba(255,255,255,.10) !important;
   border: 1px solid rgba(255,255,255,.18) !important;
-  color: #fff !important;
-  border-radius: 12px;
+  color:#fff !important;
+  border-radius:12px;
 }
 .form-control::placeholder{
   color: rgba(255,255,255,.65) !important;
 }
-
 .form-control:focus,
 .form-select:focus{
-  box-shadow: 0 0 0 .2rem rgba(30,107,255,.25) !important;
+  box-shadow:0 0 0 .2rem rgba(30,107,255,.25) !important;
   border-color: rgba(30,107,255,.45) !important;
 }
 
-/* Buttons */
-.btn{
-  border-radius: 12px;
-  font-weight: 800;
+/* ✅ iOS: منع zoom */
+@media (max-width:767.98px){
+  input, select, textarea{
+    font-size: 16px !important;
+  }
 }
 
-/* =========================================================
+/* =========================
+   Buttons
+========================= */
+.btn{
+  border-radius:12px;
+  font-weight:800;
+}
+
+/* ✅ أزرار الهيدر على الجوال تصير تحت بعض */
+@media (max-width:767.98px){
+  .mobile-stack{
+    width: 100% !important;
+  }
+  .mobile-stack > .btn,
+  .mobile-stack a.btn{
+    width: 100% !important;
+  }
+}
+
+/* =========================
    Tiles
-========================================================= */
+========================= */
 .page-tiles{
-  max-width: 1100px;
-  margin: 0 auto;
+  max-width:1100px;
+  margin:0 auto;
 }
 
 .page-titlebar{
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
   margin-bottom: 16px;
 }
 
 .tiles-grid{
-  display: grid;
-  grid-template-columns: repeat(3,1fr);
-  gap: 14px;
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:14px;
 }
-
 @media (max-width:992px){
-  .tiles-grid{ grid-template-columns: repeat(2,1fr); }
+  .tiles-grid{ grid-template-columns:repeat(2,1fr); }
 }
 @media (max-width:576px){
-  .tiles-grid{ grid-template-columns: 1fr; }
+  .tiles-grid{ grid-template-columns:1fr; }
 }
 
 .tile-card{
-  min-height: 110px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-  padding: 26px 12px;
-  border-radius: 16px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  text-align:center;
+  padding:26px 12px;
+  border-radius:16px;
+  min-height:110px;
+
   background: var(--glass) !important;
-  border: 1px solid var(--glass-border) !important;
+  border:1px solid var(--glass-border) !important;
   box-shadow: var(--glass-shadow);
-  color: #fff;
   backdrop-filter: blur(8px);
-  transition: .15s ease;
-  text-decoration: none;
+
+  color:#fff;
+  text-decoration:none;
+  transition: transform .15s ease, background .15s ease;
 }
 .tile-card:hover{
   transform: translateY(-3px);
   background: rgba(31,36,42,.85) !important;
+  color:#fff;
 }
-
 .tile-title{
-  font-weight: 900;
-  font-size: 18px;
+  font-size:18px;
+  font-weight:900;
 }
 .tile-sub{
-  font-size: 13px;
-  opacity: .85;
+  font-size:13px;
+  opacity:.85;
 }
 
-/* =========================================================
+/* =========================
    Tables
-========================================================= */
+========================= */
 .table{
-  background: transparent !important;
+  background:transparent !important;
 }
 .table>:not(caption)>*>*{
   background-color: transparent !important;
 }
 
-.table-wrap{
-  background: var(--glass) !important;
-  border-radius: 16px;
-  overflow: hidden;
-}
-
 .table thead th{
   background: var(--thead-bg) !important;
-  color: #fff !important;
-  font-weight: 900;
-  text-align: center;
+  color:#fff !important;
+  font-weight:900;
+  text-align:center;
+  vertical-align: middle;
 }
 
-.table tbody td{
+.table tbody td,
+.table tbody th{
+  text-align:center;
+  vertical-align: middle;
+  /* ✅ مهم: النص واضح فوق الزجاج */
   color: #111;
-  text-align: center;
 }
 
-/* Status colors */
-.bg-blue{ background: rgba(157,195,230,.35) !important; }
+/* Hover */
+.table-hover tbody tr:hover > *{
+  background: rgba(255,255,255,.06) !important;
+}
+
+/* Status colors (صفوف) */
 .bg-green{ background: rgba(169,209,142,.35) !important; }
 .bg-yellow{ background: rgba(255,217,102,.35) !important; }
 .bg-red{ background: rgba(255,124,128,.35) !important; }
 
-/* =========================================================
-   Utilities
-========================================================= */
+/* Tables on mobile */
+.table-responsive{
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width:767.98px){
+  .table{
+    font-size: 14px;
+  }
+}
+
+/* =========================
+   ✅ Totals Cards (Glass – same identity)
+   Fix: كانت بيضاء والنص أبيض -> الآن مراية مثل الباقي
+========================= */
+.totals-card{
+  background: var(--glass) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: var(--glass-shadow);
+  border-radius: 14px;
+  backdrop-filter: blur(8px);
+}
+
+.totals-card,
+.totals-card *{
+  color: #fff !important;
+  opacity: 1 !important;
+  filter: none !important;
+  text-shadow: 0 1px 2px rgba(0,0,0,.25);
+}
+
+.totals-card .text-muted,
+.totals-card .small{
+  color: rgba(255,255,255,.75) !important;
+}
+
+.totals-card .text-danger{
+  color: #ff6b6b !important;
+  font-weight: 900;
+}
+
+/* =========================
+   Mobile helpers
+========================= */
 .mobile-input{
   direction:ltr;
   text-align:left;
   font-weight:600;
 }
 
+/* Riyal icon */
+.riyal-icon{
+  background: transparent !important;
+  border: none !important;
+}
 .riyal-icon img{
-  height: 18px;
+  height:18px;
+  width:auto;
+  display:block;
+}
+
+/* =========================
+   iPhone Safe Area (Notch)
+   - ما يأثر على الديسكتوب
+========================= */
+@supports (padding: max(0px)) {
+  .mobile-menu-btn{
+    top: max(10px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
+  }
+
+  .sidebar{
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .main-content{
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .app-bg{
+    padding-top: env(safe-area-inset-top);
+    box-sizing: border-box;
+  }
+}
+/* =========================
+   Totals cards layout on Mobile
+   (2 columns on phones, 1 column on very small screens)
+   Desktop unchanged
+========================= */
+@media (max-width: 767.98px){
+
+  /* أي صف يحتوي إجماليات (لأنه غالبًا row g-3) */
+  .row.g-3{
+    --bs-gutter-x: .75rem;
+    --bs-gutter-y: .75rem;
+  }
+
+  /* خلّ كروت الإجماليات نصف الشاشة (2 في السطر) */
+  .row.g-3 > .col-md-3:has(.totals-card),
+  .row.g-3 > .col-md-4:has(.totals-card){
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+
+  /* تحسينات شكل الكرت على الجوال */
+  .totals-card{
+    padding: 12px !important;
+    border-radius: 14px !important;
+  }
+
+  .totals-card .fs-5{
+    font-size: 1.05rem !important;
+    line-height: 1.2;
+  }
+}
+
+/* شاشات صغيرة جدًا (آيفون SE وما شابه): عمود واحد */
+@media (max-width: 360px){
+  .row.g-3 > .col-md-3:has(.totals-card),
+  .row.g-3 > .col-md-4:has(.totals-card){
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
 }

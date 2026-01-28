@@ -6,18 +6,24 @@
     <div class="card-body p-4">
 
       <!-- Header -->
-      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
         <div>
           <h3 class="mb-1">المحاسبة اليومية — {{ kind }}</h3>
+          <div class="text-muted small">{{ day_date }}</div>
         </div>
 
-        <div class="d-flex gap-2 header-actions">
-          <a class="btn btn-secondary btn-sm" href="{{ url_for('accounting_es', kind=kind) }}">↩ رجوع</a>
-
-          <a class="btn btn-success btn-sm"
-             href="{{ url_for('accounting_movements', kind=kind, **{'from': day_date, 'to': day_date}) }}">
-            🔍 استعلام
-          </a>
+        <!-- Desktop: buttons inline | Mobile: full width -->
+        <div class="row g-2 w-100 w-md-auto">
+          <div class="col-12 col-md-auto">
+            <a class="btn btn-secondary btn-sm w-100"
+               href="{{ url_for('accounting_es', kind=kind) }}">↩ رجوع</a>
+          </div>
+          <div class="col-12 col-md-auto">
+            <a class="btn btn-success btn-sm w-100"
+               href="{{ url_for('accounting_movements', kind=kind, **{'from': day_date, 'to': day_date}) }}">
+              🔍 استعلام
+            </a>
+          </div>
         </div>
       </div>
 
@@ -36,7 +42,7 @@
               <button type="submit"
                       name="action"
                       value="open_date"
-                      class="btn btn-link p-0 ms-2 text-primary"
+                      class="btn btn-outline-primary"
                       title="بحث">
                 🔍
               </button>
@@ -46,8 +52,7 @@
           <!-- صندوق بداية اليوم -->
           <div class="col-12 col-md-3">
             <label class="form-label">صندوق بداية اليوم</label>
-            <input type="number"
-                   step="0.01"
+            <input type="number" step="0.01"
                    class="form-control cash-start"
                    name="cash_start"
                    value="{{ header.cash_start if header else '' }}"
@@ -57,8 +62,7 @@
           <!-- صندوق نهاية اليوم -->
           <div class="col-12 col-md-3">
             <label class="form-label">صندوق نهاية اليوم</label>
-            <input type="number"
-                   step="0.01"
+            <input type="number" step="0.01"
                    class="form-control cash-end"
                    name="cash_end"
                    value="{{ header.cash_end if header else '' }}"
@@ -68,8 +72,7 @@
           <!-- الإجمالي الكلي في إنجاز -->
           <div class="col-12 col-md-3">
             <label class="form-label">الإجمالي الكلي في إنجاز</label>
-            <input type="number"
-                   step="0.01"
+            <input type="number" step="0.01"
                    class="form-control total-in-enjaz"
                    name="total_in_enjaz"
                    value="{{ header.total_in_enjaz if header else '' }}"
@@ -82,12 +85,10 @@
         <div class="row g-3 mt-1">
 
           <!-- Inputs -->
-          <div class="col-lg-4">
+          <div class="col-12 col-lg-4">
             <h5 class="mt-3">المدخلات</h5>
-
-            <!-- Desktop table -->
-            <div class="table-responsive desktop-only">
-              <table class="table table-sm align-middle m-0">
+            <div class="table-responsive">
+              <table class="table table-sm align-middle text-center">
                 <thead>
                   <tr>
                     <th>النوع</th>
@@ -112,34 +113,13 @@
                 </tbody>
               </table>
             </div>
-
-            <!-- Mobile cards -->
-            <div class="mobile-only">
-              {% for i in range(8) %}
-              <div class="p-2 rounded mb-2 mobile-row">
-                <div class="mb-2">
-                  <label class="form-label small mb-1">النوع</label>
-                  <input class="form-control form-control-sm" name="input_type"
-                         value="{{ inputs[i].input_type if i < inputs|length else '' }}">
-                </div>
-                <div>
-                  <label class="form-label small mb-1">المبلغ</label>
-                  <input type="number" step="0.01"
-                         class="form-control form-control-sm input-amount"
-                         name="input_amount"
-                         value="{{ inputs[i].amount if i < inputs|length else '' }}">
-                </div>
-              </div>
-              {% endfor %}
-            </div>
           </div>
 
           <!-- General Expenses -->
-          <div class="col-lg-4">
+          <div class="col-12 col-lg-4">
             <h5 class="mt-3">مصروفات عامة</h5>
-
-            <div class="table-responsive desktop-only">
-              <table class="table table-sm align-middle m-0">
+            <div class="table-responsive">
+              <table class="table table-sm align-middle text-center">
                 <thead>
                   <tr>
                     <th>النوع</th>
@@ -164,33 +144,13 @@
                 </tbody>
               </table>
             </div>
-
-            <div class="mobile-only">
-              {% for i in range(8) %}
-              <div class="p-2 rounded mb-2 mobile-row">
-                <div class="mb-2">
-                  <label class="form-label small mb-1">النوع</label>
-                  <input class="form-control form-control-sm" name="gen_type"
-                         value="{{ gen[i].expense_type if i < gen|length else '' }}">
-                </div>
-                <div>
-                  <label class="form-label small mb-1">المبلغ</label>
-                  <input type="number" step="0.01"
-                         class="form-control form-control-sm gen-amount"
-                         name="gen_amount"
-                         value="{{ gen[i].amount if i < gen|length else '' }}">
-                </div>
-              </div>
-              {% endfor %}
-            </div>
           </div>
 
           <!-- Petty Expenses -->
-          <div class="col-lg-4">
+          <div class="col-12 col-lg-4">
             <h5 class="mt-3">مصروفات نثرية</h5>
-
-            <div class="table-responsive desktop-only">
-              <table class="table table-sm align-middle m-0">
+            <div class="table-responsive">
+              <table class="table table-sm align-middle text-center">
                 <thead>
                   <tr>
                     <th>النوع</th>
@@ -214,25 +174,6 @@
                   {% endfor %}
                 </tbody>
               </table>
-            </div>
-
-            <div class="mobile-only">
-              {% for i in range(8) %}
-              <div class="p-2 rounded mb-2 mobile-row">
-                <div class="mb-2">
-                  <label class="form-label small mb-1">النوع</label>
-                  <input class="form-control form-control-sm" name="petty_type"
-                         value="{{ petty[i].expense_type if i < petty|length else '' }}">
-                </div>
-                <div>
-                  <label class="form-label small mb-1">المبلغ</label>
-                  <input type="number" step="0.01"
-                         class="form-control form-control-sm petty-amount"
-                         name="petty_amount"
-                         value="{{ petty[i].amount if i < petty|length else '' }}">
-                </div>
-              </div>
-              {% endfor %}
             </div>
           </div>
 
@@ -317,8 +258,10 @@
         </div>
 
         <!-- Save -->
-        <div class="d-grid d-md-flex justify-content-end mt-3">
-          <button type="submit" class="btn btn-primary" name="action" value="save">حفظ</button>
+        <div class="row g-2 mt-3">
+          <div class="col-12 col-md-3 ms-md-auto">
+            <button type="submit" class="btn btn-primary w-100" name="action" value="save">حفظ</button>
+          </div>
         </div>
 
         <!-- Notes -->
@@ -329,32 +272,6 @@
         </div>
 
       </form>
-
-      <style>
-        /* هيدر: أزرار بالجوال تكون تحت بعض */
-        @media (max-width: 576px){
-          .header-actions{
-            width: 100%;
-          }
-          .header-actions a{
-            flex: 1;
-          }
-        }
-
-        /* تحويل الجداول لكروت بالجوال */
-        .mobile-only{ display:none; }
-        .desktop-only{ display:block; }
-
-        @media (max-width: 767.98px){
-          .desktop-only{ display:none; }
-          .mobile-only{ display:block; }
-          .mobile-row{
-            background: rgba(255,255,255,.08);
-            border: 1px solid rgba(255,255,255,.12);
-          }
-        }
-      </style>
-
     </div>
   </div>
 </div>
@@ -368,7 +285,9 @@ function toFloat(v){
 }
 function sumBy(sel){
   let t = 0;
-  document.querySelectorAll(sel).forEach(el => { t += toFloat(el.value); });
+  document.querySelectorAll(sel).forEach(el => {
+    t += toFloat(el.value);
+  });
   return t;
 }
 function setText(id, val){
@@ -393,8 +312,10 @@ function recalcTotals(){
   setText('total-general', general);
   setText('total-petty', petty);
   setText('total-expenses', expenses);
+
   setText('total-cash-start', cashStart);
   setText('total-cash-end', cashEnd);
+
   setText('total-overall', totalOverall);
   setText('total-error', error);
 }

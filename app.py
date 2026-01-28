@@ -19,7 +19,7 @@ import urllib.error
 # =========================
 # App Config / Constants
 # =========================
-APP_TITLE = "نظام السجلات والموظفين"
+APP_TITLE = "آل عِشان"
 BASE_DIR = os.path.dirname(__file__)
 
 # Database path:
