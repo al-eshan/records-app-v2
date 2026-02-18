@@ -717,6 +717,16 @@ def ensure_daily_accounting_schema(db):
 
     db.commit()
 
+    cols = [r[1] for r in db.execute("PRAGMA table_info(daily_header)").fetchall()]
+
+    if "total_in_enjaz" not in cols:
+        db.execute("ALTER TABLE daily_header ADD COLUMN total_in_enjaz REAL NOT NULL DEFAULT 0")
+
+    # ✅ جديد: مدفوعات الشبكة mada
+    if "mada" not in cols:
+        db.execute("ALTER TABLE daily_header ADD COLUMN mada REAL NOT NULL DEFAULT 0")
+
+    db.commit()
 
 def _normalize_kind(kind: str) -> str:
     k = (kind or "").upper().strip()
@@ -777,8 +787,10 @@ def accounting_daily(kind):
         return redirect(url_for("accounting_daily", kind=kind, date=day_date))
 
     if request.method == "POST":
+
         cash_start = _to_float(request.form.get("cash_start"), 0)
         cash_end = _to_float(request.form.get("cash_end"), 0)
+        mada = _to_float(request.form.get("mada"), 0)
         total_in_enjaz = _to_float(request.form.get("total_in_enjaz"), 0)
         notes = (request.form.get("notes") or "").strip() or None
 
@@ -793,8 +805,8 @@ def accounting_daily(kind):
         header_id = header["id"]
 
         db.execute(
-            "UPDATE daily_header SET cash_start=?, cash_end=?, total_in_enjaz=?, notes=?, updated_at=datetime('now') WHERE id=?",
-            (cash_start, cash_end, total_in_enjaz, notes, header_id),
+            "UPDATE daily_header SET cash_start=?, cash_end=?, mada=?, total_in_enjaz=?, notes=?, updated_at=datetime('now') WHERE id=?",
+            (cash_start, cash_end, mada, total_in_enjaz, notes, header_id),
         )
 
         db.execute("DELETE FROM daily_inputs WHERE header_id=?", (header_id,))
@@ -872,20 +884,30 @@ def accounting_daily(kind):
         return float(sum([_to_float(r["amount"], 0) for r in rows]))
 
     totals = {
-        "inputs": _sum(inputs),
-        "general": _sum(gen),
-        "petty": _sum(petty),
+        "inputs": _sum(inputs),   # ✅ اجمالي المشتريات النقدية
+        "general": _sum(gen),     # ✅ اجمالي المدفوعات الآجلة وسدادها (كان مصروفات عامة)
+        "petty": _sum(petty),     # ✅ اجمالي المصروفات النثرية
     }
-    totals["expenses"] = totals["general"] + totals["petty"]
 
     cash_start = _to_float(header["cash_start"], 0) if header else 0.0
     cash_end = _to_float(header["cash_end"], 0) if header else 0.0
+    mada = _to_float(header["mada"], 0) if header else 0.0
     total_in_enjaz = _to_float(header["total_in_enjaz"], 0) if header else 0.0
 
     totals["cash_start"] = cash_start
     totals["cash_end"] = cash_end
-    totals["total_overall"] = totals["inputs"] + totals["expenses"] + cash_end - cash_start
+    totals["mada"] = mada
     totals["total_in_enjaz"] = total_in_enjaz
+
+    # ✅ المعادلة الجديدة للإجمالي الكلي
+    totals["total_overall"] = (
+        cash_end
+        + mada
+        + totals["inputs"]
+        + totals["general"]
+        + totals["petty"]
+    ) - cash_start
+
     totals["error"] = totals["total_overall"] - totals["total_in_enjaz"]
 
     return render_template(
@@ -898,7 +920,6 @@ def accounting_daily(kind):
         petty=petty,
         totals=totals,
     )
-
 
 @app.route("/accounting/<kind>/movements", methods=["GET"])
 @login_required
@@ -914,7 +935,7 @@ def accounting_movements(kind):
     date_to = (request.args.get("to") or "").strip() or date.today().isoformat()
 
     headers = db.execute("""
-        SELECT id, day_date, cash_start, cash_end, total_in_enjaz
+        SELECT id, day_date, cash_start, cash_end, mada, total_in_enjaz
           FROM daily_header
          WHERE es=?
            AND day_date BETWEEN ? AND ?
@@ -924,6 +945,7 @@ def accounting_movements(kind):
     rows = []
     overall_inputs = overall_general = overall_petty = 0.0
     overall_cash_start = overall_cash_end = overall_total_in_enjaz = 0.0
+    overall_mada = 0.0
 
     for h in headers:
         hid = h["id"]
@@ -943,22 +965,22 @@ def accounting_movements(kind):
             (hid,)
         ).fetchone()["s"], 0)
 
-        expenses = total_general + total_petty
         cash_start = _to_float(h["cash_start"], 0)
         cash_end = _to_float(h["cash_end"], 0)
+        mada = _to_float(h["mada"], 0)
         total_in_enjaz = _to_float(h["total_in_enjaz"], 0)
 
-        total_overall = total_inputs + expenses + cash_end - cash_start
+        total_overall = (cash_end + mada + total_inputs + total_general + total_petty) - cash_start
         err_val = total_overall - total_in_enjaz
 
         rows.append({
             "day_date": h["day_date"],
             "cash_start": cash_start,
             "cash_end": cash_end,
+            "mada": mada,
             "total_inputs": total_inputs,
             "total_general": total_general,
             "total_petty": total_petty,
-            "expenses": expenses,
             "total_in_enjaz": total_in_enjaz,
             "total_overall": total_overall,
             "error": err_val,
@@ -967,21 +989,28 @@ def accounting_movements(kind):
         overall_inputs += total_inputs
         overall_general += total_general
         overall_petty += total_petty
+        overall_mada += mada
         overall_cash_start += cash_start
         overall_cash_end += cash_end
         overall_total_in_enjaz += total_in_enjaz
 
-    overall_expenses = overall_general + overall_petty
-    overall_total_overall = overall_inputs + overall_expenses + overall_cash_end - overall_cash_start
+    overall_total_overall = (
+        overall_cash_end
+        + overall_mada
+        + overall_inputs
+        + overall_general
+        + overall_petty
+    ) - overall_cash_start
+
     overall_error = overall_total_overall - overall_total_in_enjaz
 
     overall = {
         "inputs": overall_inputs,
         "general": overall_general,
         "petty": overall_petty,
-        "expenses": overall_expenses,
         "cash_start": overall_cash_start,
         "cash_end": overall_cash_end,
+        "mada": overall_mada,
         "total_in_enjaz": overall_total_in_enjaz,
         "total_overall": overall_total_overall,
         "error": overall_error,
@@ -995,8 +1024,6 @@ def accounting_movements(kind):
         rows=rows,
         overall=overall,
     )
-
-
 @app.route("/accounting/commitments", methods=["GET", "POST"])
 @login_required
 @permission_required("financial_commitments")

@@ -93,23 +93,23 @@
         </div>
 
         <div class="p-3 bg-light rounded totals-card">
-          <div class="small text-muted">إجمالي المدخلات</div>
+          <div class="small text-muted">إجمالي مدفوعات الشبكة mada</div>
+          <div class="fs-5 fw-bold">{{ '%.2f'|format(overall.mada) }}</div>
+        </div>
+
+        <div class="p-3 bg-light rounded totals-card">
+          <div class="small text-muted">إجمالي المشتريات النقدية</div>
           <div class="fs-5 fw-bold">{{ '%.2f'|format(overall.inputs) }}</div>
         </div>
 
         <div class="p-3 bg-light rounded totals-card">
-          <div class="small text-muted">إجمالي المصروفات العامة</div>
+          <div class="small text-muted">إجمالي المدفوعات الآجلة وسدادها</div>
           <div class="fs-5 fw-bold">{{ '%.2f'|format(overall.general) }}</div>
         </div>
 
         <div class="p-3 bg-light rounded totals-card">
           <div class="small text-muted">إجمالي المصروفات النثرية</div>
           <div class="fs-5 fw-bold">{{ '%.2f'|format(overall.petty) }}</div>
-        </div>
-
-        <div class="p-3 bg-light rounded totals-card">
-          <div class="small text-muted">إجمالي المصروفات</div>
-          <div class="fs-5 fw-bold">{{ '%.2f'|format(overall.expenses) }}</div>
         </div>
 
         <div class="p-3 bg-light rounded totals-card">
@@ -138,10 +138,10 @@
                 <th>التاريخ</th>
                 <th>صندوق البداية</th>
                 <th>صندوق النهاية</th>
-                <th>مدخلات</th>
-                <th>مصروفات عامة</th>
+                <th>مدفوعات الشبكة mada</th>
+                <th>مشتريات نقدية</th>
+                <th>المدفوعات الآجلة وسدادها</th>
                 <th>مصروفات نثرية</th>
-                <th>إجمالي المصروفات</th>
                 <th>الإجمالي الكلي في انجاز</th>
                 <th>الإجمالي الكلي</th>
                 <th>الخطاء</th>
@@ -153,25 +153,32 @@
                 <tr><td colspan="11" class="text-center text-muted py-4">لا توجد بيانات ضمن هذه المدة</td></tr>
               {% endif %}
               {% for r in rows %}
-                {% set expenses = (r.total_general or 0) + (r.total_petty or 0) %}
-                {% set total_overall = (r.total_inputs or 0) + expenses + (r.cash_end or 0) - (r.cash_start or 0) %}
-                {% set err = total_overall - (r.total_in_enjaz or 0) %}
-                <tr>
-                  <td class="fw-semibold">{{ r.day_date }}</td>
-                  <td>{{ '%.2f'|format(r.cash_start or 0) }}</td>
-                  <td>{{ '%.2f'|format(r.cash_end or 0) }}</td>
-                  <td>{{ '%.2f'|format(r.total_inputs or 0) }}</td>
-                  <td>{{ '%.2f'|format(r.total_general or 0) }}</td>
-                  <td>{{ '%.2f'|format(r.total_petty or 0) }}</td>
-                  <td>{{ '%.2f'|format(expenses) }}</td>
-                  <td>{{ '%.2f'|format(r.total_in_enjaz or 0) }}</td>
-                  <td>{{ '%.2f'|format(total_overall) }}</td>
-                  <td>{{ '%.2f'|format(err) }}</td>
-                  <td>
-                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('accounting_daily', kind=kind, date=r.day_date) }}">فتح</a>
-                  </td>
-                </tr>
-              {% endfor %}
+  <tr>
+    <td class="fw-semibold">{{ r.day_date }}</td>
+    <td>{{ '%.2f'|format(r.cash_start or 0) }}</td>
+    <td>{{ '%.2f'|format(r.cash_end or 0) }}</td>
+    <td>{{ '%.2f'|format(r.mada or 0) }}</td>
+    <td>{{ '%.2f'|format(r.total_inputs or 0) }}</td>
+    <td>{{ '%.2f'|format(r.total_general or 0) }}</td>
+    <td>{{ '%.2f'|format(r.total_petty or 0) }}</td>
+
+    <!-- ✅ الإجمالي الكلي في انجاز -->
+    <td>{{ '%.2f'|format(r.total_in_enjaz or 0) }}</td>
+
+    <!-- ✅ الإجمالي الكلي (المعادلة الجديدة من الباك-إند) -->
+    <td>{{ '%.2f'|format(r.total_overall or 0) }}</td>
+
+    <!-- ✅ الخطأ -->
+    <td class="{% if (r.error or 0) == 0 %}text-success{% else %}text-danger{% endif %}">
+      {{ '%.2f'|format(r.error or 0) }}
+    </td>
+
+    <td>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('accounting_daily', kind=kind, date=r.day_date) }}">فتح</a>
+    </td>
+  </tr>
+{% endfor %}
+
             </tbody>
           </table>
         </div>
@@ -185,51 +192,59 @@
 
         <div class="d-grid gap-3">
           {% for r in rows %}
-            {% set expenses = (r.total_general or 0) + (r.total_petty or 0) %}
-            {% set total_overall = (r.total_inputs or 0) + expenses + (r.cash_end or 0) - (r.cash_start or 0) %}
-            {% set err = total_overall - (r.total_in_enjaz or 0) %}
+  <div class="mv-card">
+    <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+      <div class="fw-bold">{{ r.day_date }}</div>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('accounting_daily', kind=kind, date=r.day_date) }}">فتح</a>
+    </div>
 
-            <div class="mv-card">
-              <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
-                <div class="fw-bold">{{ r.day_date }}</div>
-                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('accounting_daily', kind=kind, date=r.day_date) }}">فتح</a>
-              </div>
+    <div class="mv-kv">
+      <div>
+        <div class="k">صندوق البداية</div>
+        <div class="v">{{ '%.2f'|format(r.cash_start or 0) }}</div>
+      </div>
+      <div>
+        <div class="k">صندوق النهاية</div>
+        <div class="v">{{ '%.2f'|format(r.cash_end or 0) }}</div>
+      </div>
 
-              <div class="mv-kv">
-                <div>
-                  <div class="k">صندوق البداية</div>
-                  <div class="v">{{ '%.2f'|format(r.cash_start or 0) }}</div>
-                </div>
-                <div>
-                  <div class="k">صندوق النهاية</div>
-                  <div class="v">{{ '%.2f'|format(r.cash_end or 0) }}</div>
-                </div>
+      <div>
+        <div class="k">مدفوعات mada</div>
+        <div class="v">{{ '%.2f'|format(r.mada or 0) }}</div>
+      </div>
+      <div>
+        <div class="k">مشتريات نقدية</div>
+        <div class="v">{{ '%.2f'|format(r.total_inputs or 0) }}</div>
+      </div>
 
-                <div>
-                  <div class="k">مدخلات</div>
-                  <div class="v">{{ '%.2f'|format(r.total_inputs or 0) }}</div>
-                </div>
-                <div>
-                  <div class="k">مصروفات</div>
-                  <div class="v">{{ '%.2f'|format(expenses) }}</div>
-                </div>
+      <div>
+        <div class="k">الآجلة وسدادها</div>
+        <div class="v">{{ '%.2f'|format(r.total_general or 0) }}</div>
+      </div>
+      <div>
+        <div class="k">مصروفات نثرية</div>
+        <div class="v">{{ '%.2f'|format(r.total_petty or 0) }}</div>
+      </div>
 
-                <div>
-                  <div class="k">إجمالي إنجاز</div>
-                  <div class="v">{{ '%.2f'|format(r.total_in_enjaz or 0) }}</div>
-                </div>
-                <div>
-                  <div class="k">الإجمالي الكلي</div>
-                  <div class="v">{{ '%.2f'|format(total_overall) }}</div>
-                </div>
+      <div>
+        <div class="k">إجمالي إنجاز</div>
+        <div class="v">{{ '%.2f'|format(r.total_in_enjaz or 0) }}</div>
+      </div>
+      <div>
+        <div class="k">الإجمالي الكلي</div>
+        <div class="v">{{ '%.2f'|format(r.total_overall or 0) }}</div>
+      </div>
 
-                <div style="grid-column: 1 / -1;">
-                  <div class="k">الخطاء</div>
-                  <div class="v text-danger">{{ '%.2f'|format(err) }}</div>
-                </div>
-              </div>
-            </div>
-          {% endfor %}
+      <div style="grid-column: 1 / -1;">
+        <div class="k">الخطأ</div>
+        <div class="v {% if (r.error or 0) == 0 %}text-success{% else %}text-danger{% endif %}">
+          {{ '%.2f'|format(r.error or 0) }}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endfor %}
+
         </div>
       </div>
 
