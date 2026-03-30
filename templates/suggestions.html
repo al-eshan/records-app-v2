@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-tiles">
+  <div class="page-titlebar">
+    <h3>الاقتراحات</h3>
+    <span class="text-muted">إضافة ومراجعة المقترحات</span>
+  </div>
+
+  <div class="tile-card mb-4">
+    <form method="post" class="row g-2 align-items-end">
+      <input type="hidden" name="action" value="add">
+
+      <div class="col-12 col-md-9">
+        <label class="form-label">المقترح</label>
+        <input
+          type="text"
+          name="text"
+          class="form-control"
+          placeholder="اكتب المقترح هنا"
+          required
+        >
+      </div>
+
+      <div class="col-12 col-md-3">
+        <button type="submit" class="btn btn-success w-100">
+          إضافة المقترح
+        </button>
+      </div>
+    </form>
+  </div>
+
+  {% if rows|length == 0 %}
+    <div class="tile-card text-center">
+      <div class="tile-title">لا توجد اقتراحات</div>
+      <div class="tile-sub">ابدأ بإضافة أول مقترح</div>
+    </div>
+  {% endif %}
+
+  <div class="tiles-grid tiles-grid--tiles4">
+    {% for r in rows %}
+      <div class="tile-card">
+        <div class="tile-title mb-2">المقترح</div>
+
+        <div class="mb-3" style="white-space: pre-wrap;">{{ r.text }}</div>
+
+        <div class="tile-sub mb-2">
+          الحالة:
+          {% if r.status == 'approved' %}
+            <span class="badge bg-success">موافق</span>
+          {% elif r.status == 'rejected' %}
+            <span class="badge bg-warning text-dark">مرفوض</span>
+          {% else %}
+            <span class="badge bg-secondary">قيد الانتظار</span>
+          {% endif %}
+        </div>
+
+        <div class="small text-muted mb-3">
+          تاريخ الإضافة: {{ r.created_at or '-' }}
+        </div>
+
+        <div class="d-flex flex-wrap gap-2">
+          {% if session.get('username') == 'adm-es' %}
+            <form method="post" class="d-inline">
+              <input type="hidden" name="id" value="{{ r.id }}">
+              <input type="hidden" name="action" value="approve">
+              <button type="submit" class="btn btn-success btn-sm">موافق</button>
+            </form>
+
+            <form method="post" class="d-inline">
+              <input type="hidden" name="id" value="{{ r.id }}">
+              <input type="hidden" name="action" value="reject">
+              <button type="submit" class="btn btn-warning btn-sm">رفض</button>
+            </form>
+
+            <form
+              method="post"
+              class="d-inline"
+              onsubmit="return confirm('هل أنت متأكد من حذف هذا المقترح؟');"
+            >
+              <input type="hidden" name="id" value="{{ r.id }}">
+              <input type="hidden" name="action" value="delete">
+              <button type="submit" class="btn btn-danger btn-sm">حذف</button>
+            </form>
+          {% else %}
+            <div class="text-muted small">بانتظار مراجعة الإدارة</div>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}

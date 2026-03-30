@@ -74,10 +74,16 @@
         {% endif %}
 
         {% if perms.get('tasks') %}
-        <a href="{{ url_for('tasks') }}" class="menu-card {% if request.path.startswith('/tasks') %}active{% endif %}">
-          المهام
-        </a>
-        {% endif %}
+<a href="{{ url_for('tasks') }}" class="menu-card {% if request.path.startswith('/tasks') %}active{% endif %}">
+  المهام
+</a>
+{% endif %}
+
+{% if perms.get('suggestions') %}
+<a href="{{ url_for('suggestions_page') }}" class="menu-card {% if request.path.startswith('/suggestions') %}active{% endif %}">
+  الاقتراحات
+</a>
+{% endif %}
 
         {% if session.get('username') == 'adm-es' and perms.get('permissions') %}
         <a href="{{ url_for('permissions_page') }}" class="menu-card {% if request.path.startswith('/permissions') %}active{% endif %}">

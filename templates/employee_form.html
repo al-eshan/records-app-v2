@@ -37,10 +37,8 @@
               pattern="^05[0-9]{8}$"
               inputmode="numeric"
               maxlength="10"
-              title="رقم الجوال يجب أن يبدأ بـ 05 ويتكون من 10 أرقام"
               value="{{ row.mobile if row else '' }}"
             >
-            <div class="form-text">مثال: 05xxxxxxxx</div>
           </div>
 
           <div class="col-12 col-md-4">
@@ -79,29 +77,49 @@
                    value="{{ row.insurance_expiry if row else '' }}">
           </div>
 
+          <!-- الراتب الأساسي -->
           <div class="col-12 col-md-4">
             <label class="form-label">الراتب الأساسي</label>
-            <input type="number" step="0.01" min="0"
-                   name="basic_salary" class="form-control"
-                   value="{{ row.basic_salary if row and row.basic_salary is not none else '' }}">
+            <input type="number" step="0.01"
+                   name="basic_salary"
+                   class="form-control basic-salary"
+                   value="{{ row.basic_salary if row else 0 }}">
           </div>
 
+          <!-- العمولة -->
           <div class="col-12 col-md-4">
             <label class="form-label">العمولة</label>
-            <input type="number" step="0.01" min="0"
-                   name="commission" class="form-control"
-                   value="{{ row.commission if row and row.commission is not none else '' }}">
+            <input type="number" step="0.01"
+                   name="commission"
+                   class="form-control commission"
+                   value="{{ row.commission if row else 0 }}">
           </div>
 
+          <!-- إجمالي المرتب -->
+          <div class="col-12 col-md-4">
+            <label class="form-label">إجمالي المرتب</label>
+            <input type="number" step="0.01"
+                   class="form-control total-salary"
+                   value="{{ ((row.basic_salary or 0) + (row.commission or 0)) if row else 0 }}"
+                   readonly>
+          </div>
+
+          <!-- الحساب البنكي -->
           <div class="col-12 col-md-4">
             <label class="form-label">رقم الحساب البنكي</label>
-            <input
-              type="text"
-              name="bank_account"
-              class="form-control"
-              placeholder="IBAN أو رقم الحساب"
-              value="{{ row.bank_account if row else '' }}"
-            >
+            <input type="text"
+                   name="bank_account"
+                   class="form-control"
+                   value="{{ row.bank_account if row else '' }}">
+          </div>
+
+          <!-- المديونيات -->
+          <div class="col-12 col-md-4">
+            <label class="form-label">المديونيات</label>
+            <input type="number" step="0.01"
+                   name="debts"
+                   class="form-control"
+                   value="{{ row.debts if row else 0 }}">
           </div>
 
         </div>
@@ -112,9 +130,37 @@
           <button class="btn btn-primary">حفظ</button>
           <a href="/employees" class="btn btn-secondary">رجوع</a>
         </div>
+
       </form>
     </div>
   </div>
 </div>
+
+<!-- حساب تلقائي -->
+<script>
+function toNum(v){
+  const n = parseFloat((v || '').toString());
+  return isNaN(n) ? 0 : n;
+}
+
+function calcTotal(){
+  const basic = toNum(document.querySelector('.basic-salary')?.value);
+  const commission = toNum(document.querySelector('.commission')?.value);
+  const total = basic + commission;
+
+  const el = document.querySelector('.total-salary');
+  if(el){
+    el.value = total.toFixed(2);
+  }
+}
+
+document.addEventListener('input', function(e){
+  if(e.target.matches('.basic-salary, .commission')){
+    calcTotal();
+  }
+});
+
+window.addEventListener('load', calcTotal);
+</script>
 
 {% endblock %}

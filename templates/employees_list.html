@@ -24,9 +24,14 @@
                 <th>الاسم عربي</th>
                 <th>الاسم إنجليزي</th>
 
-                {# اختياري: لو تبغاهم في القائمة #}
                 <th class="d-none d-md-table-cell">الجنسية</th>
                 <th class="d-none d-md-table-cell">الجوال</th>
+
+                <th class="d-none d-lg-table-cell">الراتب الأساسي</th>
+                <th class="d-none d-lg-table-cell">العمولة</th>
+                <th class="d-none d-lg-table-cell">إجمالي المرتب</th>
+                <th class="d-none d-lg-table-cell">المديونيات</th>
+                <th class="d-none d-lg-table-cell">صافي الراتب</th>
 
                 <th>انتهاء الجواز</th>
                 <th>انتهاء الإقامة</th>
@@ -38,18 +43,27 @@
             <tbody>
               {% if rows|length == 0 %}
                 <tr>
-                  <td colspan="8" class="text-muted py-4">لا يوجد موظفين</td>
+                  <td colspan="13" class="text-muted py-4">لا يوجد موظفين</td>
                 </tr>
               {% endif %}
 
               {% for r in rows %}
+              {% set total_salary = (r.basic_salary|float) + (r.commission|float) %}
+              {% set net_salary = total_salary - (r.debts|float) %}
               <tr>
                 <td class="fw-semibold">{{ r.name_ar }}</td>
                 <td>{{ r.name_en or "-" }}</td>
 
-                {# اختياري: يظهرون في الديسكتوب فقط عشان الجوال ما يزحم #}
                 <td class="d-none d-md-table-cell">{{ r.nationality or "-" }}</td>
                 <td class="d-none d-md-table-cell">{{ r.mobile or "-" }}</td>
+
+                <td class="d-none d-lg-table-cell">{{ '%.2f'|format(r.basic_salary|float) }}</td>
+                <td class="d-none d-lg-table-cell">{{ '%.2f'|format(r.commission|float) }}</td>
+                <td class="d-none d-lg-table-cell">{{ '%.2f'|format(total_salary) }}</td>
+                <td class="d-none d-lg-table-cell">{{ '%.2f'|format(r.debts|float) }}</td>
+                <td class="d-none d-lg-table-cell">
+                  {{ '%.2f'|format(net_salary) }}
+                </td>
 
                 <td class="{{ status_color(r.passport_expiry) }}">
                   {{ r.passport_expiry or "-" }}
@@ -74,10 +88,19 @@
                     </form>
                   </div>
 
-                  {# سطر إضافي للجوال فقط يعرض الجنسية/الجوال بدون زحمة #}
                   <div class="d-md-none small text-muted mt-2 text-start">
                     <div>الجنسية: {{ r.nationality or "-" }}</div>
                     <div>الجوال: {{ r.mobile or "-" }}</div>
+                  </div>
+
+                  <div class="d-lg-none small text-muted mt-2 text-start">
+                    <div>الراتب الأساسي: {{ '%.2f'|format(r.basic_salary|float) }}</div>
+                    <div>العمولة: {{ '%.2f'|format(r.commission|float) }}</div>
+                    <div>إجمالي المرتب: {{ '%.2f'|format(total_salary) }}</div>
+                    <div>المديونيات: {{ '%.2f'|format(r.debts|float) }}</div>
+                    <div>
+                      صافي الراتب: {{ '%.2f'|format(net_salary) }}
+                    </div>
                   </div>
                 </td>
               </tr>

@@ -57,11 +57,40 @@
       <!-- Financial Info -->
       <div class="row g-3">
         <div class="col-12 col-md-4">
-          <p><b>الراتب الأساسي:</b><br>{{ row.basic_salary if row.basic_salary is not none else "-" }}</p>
+          <p>
+            <b>الراتب الأساسي:</b><br>
+            {{ '%.2f'|format(row.basic_salary|float) }}
+          </p>
         </div>
+
         <div class="col-12 col-md-4">
-          <p><b>العمولة:</b><br>{{ row.commission if row.commission is not none else "-" }}</p>
+          <p>
+            <b>العمولة:</b><br>
+            {{ '%.2f'|format(row.commission|float) }}
+          </p>
         </div>
+
+        <div class="col-12 col-md-4">
+          <p>
+            <b>إجمالي المرتب:</b><br>
+            {{ '%.2f'|format((row.basic_salary|float) + (row.commission|float)) }}
+          </p>
+        </div>
+
+        <div class="col-12 col-md-4">
+          <p>
+            <b>المديونيات:</b><br>
+            {{ '%.2f'|format(row.debts|float) }}
+          </p>
+        </div>
+
+        <div class="col-12 col-md-4">
+          <p>
+            <b>صافي الراتب:</b><br>
+            {{ '%.2f'|format((row.basic_salary|float) + (row.commission|float) - (row.debts|float)) }}
+          </p>
+        </div>
+
         <div class="col-12 col-md-4">
           <p><b>رقم الحساب البنكي:</b><br>{{ row.bank_account or "-" }}</p>
         </div>

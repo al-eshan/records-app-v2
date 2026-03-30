@@ -45,6 +45,8 @@ PERM_KEYS = [
     "records_es3",
     "employees",
     "tasks",
+    "suggestions",
+    "accounting_analytics",   # 👈 الجديد
     "permissions",
 ]
 
@@ -62,6 +64,8 @@ PERM_LABELS = {
     "records_es3": "سجلات ES3",
     "employees": "الموظفين",
     "tasks": "المهام",
+    "suggestions": "الاقتراحات",
+    "accounting_analytics": "التحليلات المحاسبية",  # 👈 الجديد
     "permissions": "الصلاحيات",
 }
 
@@ -1142,6 +1146,48 @@ def accounting_commitments_home():
     total = float(sum([_to_float(r["amount"], 0) for r in rows]))
 
     return render_template("accounting_commitments_home.html", rows=rows, total=total)
+
+@app.route("/suggestions", methods=["GET", "POST"])
+@login_required
+def suggestions_page():
+    db = get_db()
+
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS suggestions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT (datetime('now'))
+    )
+    """)
+    db.commit()
+
+    if request.method == "POST":
+        text = (request.form.get("text") or "").strip()
+        action = request.form.get("action")
+
+        if action == "add" and text:
+            db.execute("INSERT INTO suggestions (text) VALUES (?)", (text,))
+            db.commit()
+
+        elif action == "approve":
+            db.execute("UPDATE suggestions SET status='approved' WHERE id=?", (request.form.get("id"),))
+            db.commit()
+
+        elif action == "reject":
+            db.execute("UPDATE suggestions SET status='rejected' WHERE id=?", (request.form.get("id"),))
+            db.commit()
+
+        elif action == "delete":
+            db.execute("DELETE FROM suggestions WHERE id=?", (request.form.get("id"),))
+            db.commit()
+
+        return redirect(url_for("suggestions_page"))
+
+    rows = db.execute("SELECT * FROM suggestions ORDER BY id DESC").fetchall()
+
+    return render_template("suggestions.html", rows=rows)
+
 # =========================
 # Monthly Commission
 # =========================
@@ -1539,7 +1585,6 @@ def record_delete(kind, rid: int):
     flash("تم الحذف", "info")
     return redirect(url_for("records_list", kind=kind))
 
-
 # =========================
 # Employees
 # =========================
@@ -1548,12 +1593,18 @@ def record_delete(kind, rid: int):
 @permission_required("employees")
 def employees_list():
     db = get_db()
+
+    cols = [r[1] for r in db.execute("PRAGMA table_info(employees)").fetchall()]
+    if "debts" not in cols:
+        db.execute("ALTER TABLE employees ADD COLUMN debts REAL NOT NULL DEFAULT 0")
+        db.commit()
+
     rows = db.execute("""
         SELECT id, name_ar, name_en, nationality, mobile,
                passport_no, passport_expiry,
                iqama_no, iqama_expiry,
                insurance_name, insurance_expiry,
-               basic_salary, commission, bank_account
+               basic_salary, commission, bank_account, debts
         FROM employees
         ORDER BY id ASC
     """).fetchall()
@@ -1575,6 +1626,7 @@ def employees_list():
             "basic_salary": r["basic_salary"],
             "commission": r["commission"],
             "bank_account": r["bank_account"],
+            "debts": r["debts"],
         })
     return render_template("employees_list.html", rows=data)
 
@@ -1596,9 +1648,10 @@ def employee_new():
             "iqama_expiry": request.form.get("iqama_expiry", "").strip() or None,
             "insurance_name": request.form.get("insurance_name", "").strip(),
             "insurance_expiry": request.form.get("insurance_expiry", "").strip() or None,
-            "basic_salary": request.form.get("basic_salary", "").strip() or None,
-            "commission": request.form.get("commission", "").strip() or None,
+            "basic_salary": _to_float(request.form.get("basic_salary"), 0),
+            "commission": _to_float(request.form.get("commission"), 0),
             "bank_account": request.form.get("bank_account", "").strip(),
+            "debts": _to_float(request.form.get("debts"), 0),
         }
 
         if not payload["name_ar"]:
@@ -1611,15 +1664,16 @@ def employee_new():
               passport_no, passport_expiry,
               iqama_no, iqama_expiry,
               insurance_name, insurance_expiry,
-              basic_salary, commission, bank_account
+              basic_salary, commission, bank_account, debts
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             payload["name_ar"], payload["name_en"], payload["nationality"], payload["mobile"],
             payload["passport_no"], payload["passport_expiry"],
             payload["iqama_no"], payload["iqama_expiry"],
             payload["insurance_name"], payload["insurance_expiry"],
-            payload["basic_salary"], payload["commission"], payload["bank_account"],
+            payload["basic_salary"], payload["commission"],
+            payload["bank_account"], payload["debts"],
         ))
         db.commit()
         new_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -1627,11 +1681,11 @@ def employee_new():
         ws, err = open_ws("employees")
         if not err:
             headers = [
-                "id","name_ar","name_en","nationality","mobile",
-                "passport_no","passport_expiry",
-                "iqama_no","iqama_expiry",
-                "insurance_name","insurance_expiry",
-                "basic_salary","commission","bank_account"
+                "id", "name_ar", "name_en", "nationality", "mobile",
+                "passport_no", "passport_expiry",
+                "iqama_no", "iqama_expiry",
+                "insurance_name", "insurance_expiry",
+                "basic_salary", "commission", "bank_account", "debts"
             ]
             ok = ws_upsert(ws, headers, [
                 new_id,
@@ -1640,8 +1694,10 @@ def employee_new():
                 payload["passport_no"], payload["passport_expiry"] or "",
                 payload["iqama_no"], payload["iqama_expiry"] or "",
                 payload["insurance_name"], payload["insurance_expiry"] or "",
-                payload["basic_salary"] or "", payload["commission"] or "",
+                payload["basic_salary"] or "",
+                payload["commission"] or "",
                 payload["bank_account"],
+                payload["debts"],
             ], new_id)
             if not ok:
                 flash("⚠️ فشل تصدير Google Sheets (employees/new) راجع logs", "warning")
@@ -1691,9 +1747,10 @@ def employee_edit(eid: int):
             "iqama_expiry": request.form.get("iqama_expiry", "").strip() or None,
             "insurance_name": request.form.get("insurance_name", "").strip(),
             "insurance_expiry": request.form.get("insurance_expiry", "").strip() or None,
-            "basic_salary": request.form.get("basic_salary", "").strip() or None,
-            "commission": request.form.get("commission", "").strip() or None,
+            "basic_salary": _to_float(request.form.get("basic_salary"), 0),
+            "commission": _to_float(request.form.get("commission"), 0),
             "bank_account": request.form.get("bank_account", "").strip(),
+            "debts": _to_float(request.form.get("debts"), 0),
         }
 
         if not payload["name_ar"]:
@@ -1714,7 +1771,8 @@ def employee_edit(eid: int):
                 insurance_expiry=?,
                 basic_salary=?,
                 commission=?,
-                bank_account=?
+                bank_account=?,
+                debts=?
             WHERE id=?
         """, (
             payload["name_ar"], payload["name_en"],
@@ -1723,18 +1781,19 @@ def employee_edit(eid: int):
             payload["iqama_no"], payload["iqama_expiry"],
             payload["insurance_name"], payload["insurance_expiry"],
             payload["basic_salary"], payload["commission"],
-            payload["bank_account"], eid,
+            payload["bank_account"], payload["debts"],
+            eid,
         ))
         db.commit()
 
         ws, err = open_ws("employees")
         if not err:
             headers = [
-                "id","name_ar","name_en","nationality","mobile",
-                "passport_no","passport_expiry",
-                "iqama_no","iqama_expiry",
-                "insurance_name","insurance_expiry",
-                "basic_salary","commission","bank_account"
+                "id", "name_ar", "name_en", "nationality", "mobile",
+                "passport_no", "passport_expiry",
+                "iqama_no", "iqama_expiry",
+                "insurance_name", "insurance_expiry",
+                "basic_salary", "commission", "bank_account", "debts"
             ]
             ok = ws_upsert(ws, headers, [
                 eid,
@@ -1743,8 +1802,10 @@ def employee_edit(eid: int):
                 payload["passport_no"], payload["passport_expiry"] or "",
                 payload["iqama_no"], payload["iqama_expiry"] or "",
                 payload["insurance_name"], payload["insurance_expiry"] or "",
-                payload["basic_salary"] or "", payload["commission"] or "",
+                payload["basic_salary"] or "",
+                payload["commission"] or "",
                 payload["bank_account"],
+                payload["debts"],
             ], eid)
             if not ok:
                 flash("⚠️ فشل تصدير Google Sheets (employees/edit) راجع logs", "warning")
@@ -1781,8 +1842,6 @@ def employee_delete(eid: int):
 
     flash("تم حذف الموظف", "info")
     return redirect(url_for("employees_list"))
-
-
 # =========================
 # Tasks
 # =========================
