@@ -84,12 +84,7 @@
           </p>
         </div>
 
-        <div class="col-12 col-md-4">
-          <p>
-            <b>صافي الراتب:</b><br>
-            {{ '%.2f'|format((row.basic_salary|float) + (row.commission|float) - (row.debts|float)) }}
-          </p>
-        </div>
+        
 
         <div class="col-12 col-md-4">
           <p><b>رقم الحساب البنكي:</b><br>{{ row.bank_account or "-" }}</p>
