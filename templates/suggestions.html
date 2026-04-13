@@ -7,6 +7,7 @@
     <span class="text-muted">إضافة ومراجعة المقترحات</span>
   </div>
 
+  <!-- إضافة مقترح -->
   <div class="tile-card mb-4">
     <form method="post" class="row g-2 align-items-end">
       <input type="hidden" name="action" value="add">
@@ -42,27 +43,27 @@
       <div class="tile-card">
         <div class="tile-title mb-2">المقترح</div>
 
-        <!-- عرض المقترح -->
+        <!-- عرض النص -->
         <div class="mb-3">
-  <!-- عرض النص -->
-  <div id="text-view-{{ r.id }}" style="white-space: pre-wrap;">
-    {{ r.text }}
-  </div>
+          <div id="text-view-{{ r.id }}" style="white-space: pre-wrap;">
+            {{ r.text }}
+          </div>
 
-  <!-- نموذج التعديل (مخفي) -->
-  <form method="post" id="edit-form-{{ r.id }}" style="display:none;">
-    <input type="hidden" name="id" value="{{ r.id }}">
-    <input type="hidden" name="action" value="edit">
+          <!-- نموذج التعديل -->
+          <form method="post" id="edit-form-{{ r.id }}" class="mt-2" style="display:none;">
+            <input type="hidden" name="id" value="{{ r.id }}">
+            <input type="hidden" name="action" value="edit">
 
-    <textarea name="text" class="form-control form-control-sm" rows="3">{{ r.text }}</textarea>
+            <textarea name="text" class="form-control form-control-sm mb-2" rows="3">{{ r.text }}</textarea>
 
-    <button type="submit" class="btn btn-sm btn-primary mt-2">حفظ التعديل</button>
-    <button type="button" class="btn btn-sm btn-secondary mt-2" onclick="cancelEdit({{ r.id }})">إلغاء</button>
-  </form>
-</div>
+            <div class="d-flex gap-2 flex-wrap">
+              <button type="submit" class="btn btn-sm btn-primary">حفظ التعديل</button>
+              <button type="button" class="btn btn-sm btn-secondary" onclick="cancelEdit({{ r.id }})">إلغاء</button>
+            </div>
+          </form>
+        </div>
 
-        
-
+        <!-- الحالة -->
         <div class="tile-sub mb-2">
           الحالة:
           {% if r.status == 'approved' %}
@@ -87,61 +88,70 @@
               <input type="hidden" name="id" value="{{ r.id }}">
               <input type="hidden" name="action" value="save_note">
 
-              <textarea name="admin_note" class="form-control form-control-sm" rows="3" placeholder="اكتب ملاحظات الإدارة هنا">{{ r.admin_note or '' }}</textarea>
+              <textarea
+                name="admin_note"
+                class="form-control form-control-sm"
+                rows="3"
+                placeholder="اكتب ملاحظات الإدارة هنا"
+              >{{ r.admin_note or '' }}</textarea>
 
               <button type="submit" class="btn btn-sm btn-dark mt-2">حفظ الملاحظات</button>
             </form>
           {% else %}
-            <div class="form-control form-control-sm bg-light" style="min-height: 84px; white-space: pre-wrap;">{{ r.admin_note or '-' }}</div>
+            <div class="form-control form-control-sm bg-light" style="min-height: 84px; white-space: pre-wrap;">
+              {{ r.admin_note or '-' }}
+            </div>
           {% endif %}
         </div>
 
-        <div class="d-flex flex-wrap gap-2">
-          <div class="d-flex flex-wrap gap-2">
+        <!-- الأزرار -->
+        <div class="d-flex gap-2 justify-content-center flex-wrap mt-3">
+          {% if is_admin %}
+            <form method="post" class="m-0">
+              <input type="hidden" name="id" value="{{ r.id }}">
+              <input type="hidden" name="action" value="approve">
+              <button type="submit" class="btn btn-success btn-sm">موافق</button>
+            </form>
 
-  {% if is_admin %}
-    <form method="post" class="d-inline">
-      <input type="hidden" name="id" value="{{ r.id }}">
-      <input type="hidden" name="action" value="approve">
-      <button type="submit" class="btn btn-success btn-sm">موافق</button>
-    </form>
+            <form method="post" class="m-0">
+              <input type="hidden" name="id" value="{{ r.id }}">
+              <input type="hidden" name="action" value="reject">
+              <button type="submit" class="btn btn-warning btn-sm">رفض</button>
+            </form>
+          {% endif %}
 
-    <form method="post" class="d-inline">
-      <input type="hidden" name="id" value="{{ r.id }}">
-      <input type="hidden" name="action" value="reject">
-      <button type="submit" class="btn btn-warning btn-sm">رفض</button>
-    </form>
-  {% endif %}
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            onclick="startEdit({{ r.id }})">
+            تعديل
+          </button>
 
-  <!-- زر تعديل -->
-  <button type="button"
-          class="btn btn-primary btn-sm"
-          onclick="startEdit({{ r.id }})">
-    تعديل
-  </button>
-
-  <!-- حذف -->
-  <form method="post" class="d-inline"
-        onsubmit="return confirm('هل أنت متأكد من حذف هذا المقترح؟');">
-    <input type="hidden" name="id" value="{{ r.id }}">
-    <input type="hidden" name="action" value="delete">
-    <button type="submit" class="btn btn-danger btn-sm">حذف</button>
-  </form>
-
-</div>
+          <form method="post" class="m-0" onsubmit="return confirm('هل أنت متأكد من حذف هذا المقترح؟');">
+            <input type="hidden" name="id" value="{{ r.id }}">
+            <input type="hidden" name="action" value="delete">
+            <button type="submit" class="btn btn-danger btn-sm">حذف</button>
+          </form>
+        </div>
       </div>
     {% endfor %}
   </div>
 </div>
+
 <script>
 function startEdit(id) {
-  document.getElementById('text-view-' + id).style.display = 'none';
-  document.getElementById('edit-form-' + id).style.display = 'block';
+  const view = document.getElementById('text-view-' + id);
+  const form = document.getElementById('edit-form-' + id);
+  if (view) view.style.display = 'none';
+  if (form) form.style.display = 'block';
 }
 
 function cancelEdit(id) {
-  document.getElementById('text-view-' + id).style.display = 'block';
-  document.getElementById('edit-form-' + id).style.display = 'none';
+  const view = document.getElementById('text-view-' + id);
+  const form = document.getElementById('edit-form-' + id);
+  if (view) view.style.display = 'block';
+  if (form) form.style.display = 'none';
 }
 </script>
+
 {% endblock %}
