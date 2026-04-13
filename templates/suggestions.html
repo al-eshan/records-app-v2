@@ -42,7 +42,19 @@
       <div class="tile-card">
         <div class="tile-title mb-2">المقترح</div>
 
+        <!-- عرض المقترح -->
         <div class="mb-3" style="white-space: pre-wrap;">{{ r.text }}</div>
+
+        <!-- نموذج تعديل المقترح -->
+        <form method="post" class="mb-3">
+          <input type="hidden" name="id" value="{{ r.id }}">
+          <input type="hidden" name="action" value="edit">
+
+          <label class="form-label small">تعديل المقترح</label>
+          <textarea name="text" class="form-control form-control-sm" rows="3">{{ r.text }}</textarea>
+
+          <button type="submit" class="btn btn-sm btn-primary mt-2">تعديل</button>
+        </form>
 
         <div class="tile-sub mb-2">
           الحالة:
@@ -59,32 +71,47 @@
           تاريخ الإضافة: {{ r.created_at or '-' }}
         </div>
 
+        <!-- ملاحظات الإدارة -->
+        <div class="mb-3">
+          <label class="form-label small">ملاحظات الإدارة</label>
+
+          {% if is_admin %}
+            <form method="post">
+              <input type="hidden" name="id" value="{{ r.id }}">
+              <input type="hidden" name="action" value="save_note">
+
+              <textarea name="admin_note" class="form-control form-control-sm" rows="3" placeholder="اكتب ملاحظات الإدارة هنا">{{ r.admin_note or '' }}</textarea>
+
+              <button type="submit" class="btn btn-sm btn-dark mt-2">حفظ الملاحظات</button>
+            </form>
+          {% else %}
+            <div class="form-control form-control-sm bg-light" style="min-height: 84px; white-space: pre-wrap;">{{ r.admin_note or '-' }}</div>
+          {% endif %}
+        </div>
+
         <div class="d-flex flex-wrap gap-2">
-          {% if session.get('username') == 'adm-es' %}
+          {% if is_admin %}
             <form method="post" class="d-inline">
               <input type="hidden" name="id" value="{{ r.id }}">
               <input type="hidden" name="action" value="approve">
+              <input type="hidden" name="admin_note" value="{{ r.admin_note or '' }}">
               <button type="submit" class="btn btn-success btn-sm">موافق</button>
             </form>
 
             <form method="post" class="d-inline">
               <input type="hidden" name="id" value="{{ r.id }}">
               <input type="hidden" name="action" value="reject">
+              <input type="hidden" name="admin_note" value="{{ r.admin_note or '' }}">
               <button type="submit" class="btn btn-warning btn-sm">رفض</button>
             </form>
-
-            <form
-              method="post"
-              class="d-inline"
-              onsubmit="return confirm('هل أنت متأكد من حذف هذا المقترح؟');"
-            >
-              <input type="hidden" name="id" value="{{ r.id }}">
-              <input type="hidden" name="action" value="delete">
-              <button type="submit" class="btn btn-danger btn-sm">حذف</button>
-            </form>
-          {% else %}
-            <div class="text-muted small">بانتظار مراجعة الإدارة</div>
           {% endif %}
+
+          <form method="post" class="d-inline"
+                onsubmit="return confirm('هل أنت متأكد من حذف هذا المقترح؟');">
+            <input type="hidden" name="id" value="{{ r.id }}">
+            <input type="hidden" name="action" value="delete">
+            <button type="submit" class="btn btn-danger btn-sm">حذف</button>
+          </form>
         </div>
       </div>
     {% endfor %}

@@ -1157,37 +1157,94 @@ def suggestions_page():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         text TEXT NOT NULL,
         status TEXT DEFAULT 'pending',
+        admin_note TEXT DEFAULT '',
         created_at TEXT DEFAULT (datetime('now'))
     )
     """)
+
+    cols = [r[1] for r in db.execute("PRAGMA table_info(suggestions)").fetchall()]
+    if "admin_note" not in cols:
+        db.execute("ALTER TABLE suggestions ADD COLUMN admin_note TEXT DEFAULT ''")
+
     db.commit()
 
+    is_admin = (session.get("username") == "adm-es")
+
     if request.method == "POST":
+        action = (request.form.get("action") or "").strip()
         text = (request.form.get("text") or "").strip()
-        action = request.form.get("action")
 
         if action == "add" and text:
-            db.execute("INSERT INTO suggestions (text) VALUES (?)", (text,))
+            db.execute(
+                "INSERT INTO suggestions (text, status, admin_note) VALUES (?, 'pending', '')",
+                (text,)
+            )
             db.commit()
+            flash("تمت إضافة المقترح", "success")
 
-        elif action == "approve":
-            db.execute("UPDATE suggestions SET status='approved' WHERE id=?", (request.form.get("id"),))
-            db.commit()
-
-        elif action == "reject":
-            db.execute("UPDATE suggestions SET status='rejected' WHERE id=?", (request.form.get("id"),))
-            db.commit()
+        elif action == "edit":
+            sid = int(request.form.get("id") or 0)
+            if sid and text:
+                db.execute(
+                    "UPDATE suggestions SET text=? WHERE id=?",
+                    (text, sid)
+                )
+                db.commit()
+                flash("تم تعديل المقترح", "success")
 
         elif action == "delete":
-            db.execute("DELETE FROM suggestions WHERE id=?", (request.form.get("id"),))
-            db.commit()
+            sid = int(request.form.get("id") or 0)
+            if sid:
+                db.execute("DELETE FROM suggestions WHERE id=?", (sid,))
+                db.commit()
+                flash("تم حذف المقترح", "info")
+
+        elif action == "approve" and is_admin:
+            sid = int(request.form.get("id") or 0)
+            admin_note = (request.form.get("admin_note") or "").strip()
+            if sid:
+                db.execute(
+                    "UPDATE suggestions SET status='approved', admin_note=? WHERE id=?",
+                    (admin_note, sid)
+                )
+                db.commit()
+                flash("تمت الموافقة على المقترح", "success")
+
+        elif action == "reject" and is_admin:
+            sid = int(request.form.get("id") or 0)
+            admin_note = (request.form.get("admin_note") or "").strip()
+            if sid:
+                db.execute(
+                    "UPDATE suggestions SET status='rejected', admin_note=? WHERE id=?",
+                    (admin_note, sid)
+                )
+                db.commit()
+                flash("تم رفض المقترح", "warning")
+
+        elif action == "save_note" and is_admin:
+            sid = int(request.form.get("id") or 0)
+            admin_note = (request.form.get("admin_note") or "").strip()
+            if sid:
+                db.execute(
+                    "UPDATE suggestions SET admin_note=? WHERE id=?",
+                    (admin_note, sid)
+                )
+                db.commit()
+                flash("تم حفظ ملاحظات الإدارة", "success")
 
         return redirect(url_for("suggestions_page"))
 
-    rows = db.execute("SELECT * FROM suggestions ORDER BY id DESC").fetchall()
+    rows = db.execute("""
+        SELECT *
+        FROM suggestions
+        ORDER BY id DESC
+    """).fetchall()
 
-    return render_template("suggestions.html", rows=rows)
-
+    return render_template(
+        "suggestions.html",
+        rows=rows,
+        is_admin=is_admin
+    )
 # =========================
 # Monthly Commission
 # =========================
