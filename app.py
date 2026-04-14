@@ -2,19 +2,22 @@
 import os
 import json
 import sqlite3
+import urllib.request
+import urllib.error
+
+from io import BytesIO
 from datetime import date, datetime
 from functools import wraps
 
 from flask import (
     Flask, g, render_template,
-    request, redirect, url_for, session, flash
+    request, redirect, url_for, session, flash,
+    send_file
 )
 
 from werkzeug.security import generate_password_hash, check_password_hash
 
-import urllib.request
-import urllib.error
-
+from openpyxl import Workbook
 
 # =========================
 # App Config / Constants
@@ -39,6 +42,9 @@ PERM_KEYS = [
     "accounting_es3",
     "monthly_commission",
     "financial_commitments",
+    "debts_es1",
+    "debts_es2",
+    "debts_es3",
     "records_home",
     "records_es1",
     "records_es2",
@@ -46,7 +52,7 @@ PERM_KEYS = [
     "employees",
     "tasks",
     "suggestions",
-    "accounting_analytics",   # 👈 الجديد
+    "accounting_analytics",
     "permissions",
 ]
 
@@ -58,6 +64,9 @@ PERM_LABELS = {
     "accounting_es3": "محاسبة يومية ES3",
     "monthly_commission": "عمولة المبيعات",
     "financial_commitments": "الالتزامات المالية",
+    "debts_es1": "دفتر الديون ES1",
+    "debts_es2": "دفتر الديون ES2",
+    "debts_es3": "دفتر الديون ES3",
     "records_home": "السجلات",
     "records_es1": "سجلات ES1",
     "records_es2": "سجلات ES2",
@@ -65,7 +74,7 @@ PERM_LABELS = {
     "employees": "الموظفين",
     "tasks": "المهام",
     "suggestions": "الاقتراحات",
-    "accounting_analytics": "التحليلات المحاسبية",  # 👈 الجديد
+    "accounting_analytics": "التحليلات المحاسبية",
     "permissions": "الصلاحيات",
 }
 
@@ -112,20 +121,17 @@ def _table_exists(db, name: str) -> bool:
     except Exception:
         return False
 
-
 def ensure_db_schema_once():
     """Ensure schema.sql has been applied (safe to call multiple times)."""
     if app.config.get("DB_BOOTSTRAPPED"):
         return
 
-    # تأكد المسار موجود (خصوصاً /var/data)
     db_dir = os.path.dirname(DATABASE)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
 
     db = get_db()
 
-    # إذا DB جديدة (ما فيه جدول users) طبق schema.sql
     if not _table_exists(db, "users"):
         schema_path = os.path.join(BASE_DIR, "schema.sql")
         with open(schema_path, "r", encoding="utf-8") as f:
@@ -151,6 +157,53 @@ def ensure_financial_commitments_schema(db):
     cols = [r[1] for r in db.execute("PRAGMA table_info(financial_commitments)").fetchall()]
     if "task_id" not in cols:
         db.execute("ALTER TABLE financial_commitments ADD COLUMN task_id INTEGER")
+
+    db.commit()
+
+
+def ensure_debts_ledger_schema(db):
+    """Ensure debts_ledger table exists and has all required columns."""
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS debts_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        es TEXT NOT NULL,
+        invoice_no TEXT NOT NULL,
+        invoice_date TEXT,
+        customer_name TEXT NOT NULL,
+        mobile TEXT,
+        address TEXT,
+        invoice_total REAL NOT NULL DEFAULT 0,
+        paid_amount REAL NOT NULL DEFAULT 0,
+        remaining_amount REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT
+    )
+    """)
+
+    cols = [r[1] for r in db.execute("PRAGMA table_info(debts_ledger)").fetchall()]
+
+    if "es" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN es TEXT NOT NULL DEFAULT 'ES1'")
+    if "invoice_no" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN invoice_no TEXT NOT NULL DEFAULT ''")
+    if "invoice_date" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN invoice_date TEXT")
+    if "customer_name" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN customer_name TEXT NOT NULL DEFAULT ''")
+    if "mobile" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN mobile TEXT")
+    if "address" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN address TEXT")
+    if "invoice_total" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN invoice_total REAL NOT NULL DEFAULT 0")
+    if "paid_amount" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN paid_amount REAL NOT NULL DEFAULT 0")
+    if "remaining_amount" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN remaining_amount REAL NOT NULL DEFAULT 0")
+    if "created_at" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN created_at TEXT")
+    if "updated_at" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN updated_at TEXT")
 
     db.commit()
 
@@ -192,11 +245,11 @@ def _ensure_bootstrap():
         ensure_db_schema_once()
         db = get_db()
         ensure_financial_commitments_schema(db)
+        ensure_debts_ledger_schema(db)
         ensure_master_user()
     except Exception as e:
         print("bootstrap error:", e)
         pass
-
 
 # =========================
 # Financial Commitments -> Tasks helpers
@@ -1146,7 +1199,238 @@ def accounting_commitments_home():
     total = float(sum([_to_float(r["amount"], 0) for r in rows]))
 
     return render_template("accounting_commitments_home.html", rows=rows, total=total)
+@app.route("/accounting/debts")
+@login_required
+@permission_required("accounting_home")
+def accounting_debts_home():
+    return render_template("accounting_debts_home.html")
 
+
+@app.route("/accounting/debts/<es>", methods=["GET", "POST"])
+@login_required
+def accounting_debts_branch(es):
+    db = get_db()
+    ensure_debts_ledger_schema(db)
+
+    es = (es or "").strip().upper()
+    if es not in ["ES1", "ES2", "ES3"]:
+        flash("الفرع غير صحيح", "danger")
+        return redirect(url_for("accounting_home"))
+
+    perm_map = {
+        "ES1": "debts_es1",
+        "ES2": "debts_es2",
+        "ES3": "debts_es3",
+    }
+
+    needed_perm = perm_map[es]
+    if not (session.get("perms") and session["perms"].get(needed_perm)):
+        flash("ليس لديك صلاحية للوصول إلى هذه الصفحة", "danger")
+        return redirect(url_for("home"))
+
+    action = (request.form.get("action") or "").strip()
+
+    if request.method == "POST":
+        invoice_no = (request.form.get("invoice_no") or "").strip()
+        invoice_date = (request.form.get("invoice_date") or "").strip()
+        customer_name = (request.form.get("customer_name") or "").strip()
+        mobile = (request.form.get("mobile") or "").strip()
+        address = (request.form.get("address") or "").strip()
+        invoice_total = _to_float(request.form.get("invoice_total"))
+        paid_amount = _to_float(request.form.get("paid_amount"))
+        remaining_amount = invoice_total - paid_amount
+
+        if action == "add":
+            if not invoice_no or not customer_name:
+                flash("رقم الفاتورة واسم العميل مطلوبان", "danger")
+            else:
+                db.execute("""
+                    INSERT INTO debts_ledger (
+                        es, invoice_no, invoice_date, customer_name, mobile, address,
+                        invoice_total, paid_amount, remaining_amount
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    es, invoice_no, invoice_date, customer_name, mobile, address,
+                    invoice_total, paid_amount, remaining_amount
+                ))
+                db.commit()
+                flash("تمت إضافة العميل بنجاح", "success")
+                return redirect(url_for("accounting_debts_branch", es=es))
+
+        elif action == "update":
+            row_id = (request.form.get("id") or "").strip()
+            if not row_id:
+                flash("معرّف السجل غير موجود", "danger")
+            elif not invoice_no or not customer_name:
+                flash("رقم الفاتورة واسم العميل مطلوبان", "danger")
+            else:
+                db.execute("""
+                    UPDATE debts_ledger
+                    SET invoice_no = ?,
+                        invoice_date = ?,
+                        customer_name = ?,
+                        mobile = ?,
+                        address = ?,
+                        invoice_total = ?,
+                        paid_amount = ?,
+                        remaining_amount = ?,
+                        updated_at = datetime('now')
+                    WHERE id = ? AND es = ?
+                """, (
+                    invoice_no, invoice_date, customer_name, mobile, address,
+                    invoice_total, paid_amount, remaining_amount,
+                    row_id, es
+                ))
+                db.commit()
+                flash("تم تعديل السجل", "success")
+                return redirect(url_for("accounting_debts_branch", es=es))
+
+        elif action == "delete":
+            row_id = (request.form.get("id") or "").strip()
+            if row_id:
+                db.execute("DELETE FROM debts_ledger WHERE id = ? AND es = ?", (row_id, es))
+                db.commit()
+                flash("تم حذف السجل", "warning")
+            return redirect(url_for("accounting_debts_branch", es=es))
+
+    rows = db.execute("""
+        SELECT *
+        FROM debts_ledger
+        WHERE es = ?
+        ORDER BY id DESC
+    """, (es,)).fetchall()
+
+    total_invoice = sum((r["invoice_total"] or 0) for r in rows)
+    total_paid = sum((r["paid_amount"] or 0) for r in rows)
+    total_remaining = sum((r["remaining_amount"] or 0) for r in rows)
+
+    edit_row = None
+    edit_id = (request.args.get("edit_id") or "").strip()
+    if edit_id:
+        edit_row = db.execute("""
+            SELECT *
+            FROM debts_ledger
+            WHERE id = ? AND es = ?
+        """, (edit_id, es)).fetchone()
+
+    return render_template(
+        "accounting_debts_branch.html",
+        es=es,
+        rows=rows,
+        edit_row=edit_row,
+        total_invoice=total_invoice,
+        total_paid=total_paid,
+        total_remaining=total_remaining,
+    )
+
+
+@app.route("/accounting/debts/<es>/detail/<int:row_id>")
+@login_required
+def accounting_debts_detail(es, row_id):
+    db = get_db()
+    ensure_debts_ledger_schema(db)
+
+    es = (es or "").strip().upper()
+    if es not in ["ES1", "ES2", "ES3"]:
+        flash("الفرع غير صحيح", "danger")
+        return redirect(url_for("accounting_home"))
+
+    perm_map = {
+        "ES1": "debts_es1",
+        "ES2": "debts_es2",
+        "ES3": "debts_es3",
+    }
+
+    needed_perm = perm_map[es]
+    if not (session.get("perms") and session["perms"].get(needed_perm)):
+        flash("ليس لديك صلاحية للوصول إلى هذه الصفحة", "danger")
+        return redirect(url_for("home"))
+
+    row = db.execute("""
+        SELECT *
+        FROM debts_ledger
+        WHERE id = ? AND es = ?
+    """, (row_id, es)).fetchone()
+
+    if not row:
+        flash("السجل غير موجود", "danger")
+        return redirect(url_for("accounting_debts_branch", es=es))
+
+    return render_template("accounting_debts_detail.html", row=row, es=es)
+
+
+@app.route("/accounting/debts/<es>/export")
+@login_required
+def accounting_debts_export(es):
+    db = get_db()
+    ensure_debts_ledger_schema(db)
+
+    es = (es or "").strip().upper()
+    if es not in ["ES1", "ES2", "ES3"]:
+        flash("الفرع غير صحيح", "danger")
+        return redirect(url_for("accounting_home"))
+
+    perm_map = {
+        "ES1": "debts_es1",
+        "ES2": "debts_es2",
+        "ES3": "debts_es3",
+    }
+
+    needed_perm = perm_map[es]
+    if not (session.get("perms") and session["perms"].get(needed_perm)):
+        flash("ليس لديك صلاحية للوصول إلى هذه الصفحة", "danger")
+        return redirect(url_for("home"))
+
+    rows = db.execute("""
+        SELECT invoice_no, invoice_date, customer_name, mobile, address,
+               invoice_total, paid_amount, remaining_amount, created_at, updated_at
+        FROM debts_ledger
+        WHERE es = ?
+        ORDER BY id DESC
+    """, (es,)).fetchall()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"دفتر الديون {es}"
+
+    ws.append([
+        "رقم الفاتورة",
+        "تاريخ الفاتورة",
+        "اسم العميل",
+        "رقم الجوال",
+        "العنوان",
+        "إجمالي الفاتورة",
+        "المبلغ المسدد",
+        "المبلغ المتبقي",
+        "تاريخ الإنشاء",
+        "آخر تحديث",
+    ])
+
+    for r in rows:
+        ws.append([
+            r["invoice_no"],
+            r["invoice_date"],
+            r["customer_name"],
+            r["mobile"],
+            r["address"],
+            r["invoice_total"],
+            r["paid_amount"],
+            r["remaining_amount"],
+            r["created_at"],
+            r["updated_at"],
+        ])
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f"debts_{es}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 @app.route("/suggestions", methods=["GET", "POST"])
 @login_required
 def suggestions_page():

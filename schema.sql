@@ -161,3 +161,18 @@ CREATE TABLE IF NOT EXISTS financial_commitments (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS debts_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    es TEXT NOT NULL,
+    invoice_no TEXT NOT NULL,
+    invoice_date TEXT,
+    customer_name TEXT NOT NULL,
+    mobile TEXT,
+    address TEXT,
+    invoice_total REAL NOT NULL DEFAULT 0,
+    paid_amount REAL NOT NULL DEFAULT 0,
+    remaining_amount REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT
+);

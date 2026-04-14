@@ -24,6 +24,27 @@
       <div class="tile-sub">فتح محاسبة ES3</div>
     </a>
 
+    {% if session.perms and session.perms.get('debts_es1') %}
+    <a href="{{ url_for('accounting_debts_branch', es='ES1') }}" class="tile-card tile-center">
+      <div class="tile-title">دفتر الديون ES1</div>
+      <div class="tile-sub">إدارة ديون عملاء ES1</div>
+    </a>
+    {% endif %}
+
+    {% if session.perms and session.perms.get('debts_es2') %}
+    <a href="{{ url_for('accounting_debts_branch', es='ES2') }}" class="tile-card tile-center">
+      <div class="tile-title">دفتر الديون ES2</div>
+      <div class="tile-sub">إدارة ديون عملاء ES2</div>
+    </a>
+    {% endif %}
+
+    {% if session.perms and session.perms.get('debts_es3') %}
+    <a href="{{ url_for('accounting_debts_branch', es='ES3') }}" class="tile-card tile-center">
+      <div class="tile-title">دفتر الديون ES3</div>
+      <div class="tile-sub">إدارة ديون عملاء ES3</div>
+    </a>
+    {% endif %}
+
     {% if session.perms and session.perms.get('monthly_commission') %}
     <a href="{{ url_for('monthly_commission') }}" class="tile-card tile-center">
       <div class="tile-title">عمولة المبيعات الشهرية</div>
@@ -36,7 +57,7 @@
       <div class="tile-sub">إدارة ومتابعة الالتزامات</div>
     </a>
 
-{% if session.perms and session.perms.get('accounting_analytics') %}
+    {% if session.perms and session.perms.get('accounting_analytics') %}
     <a href="https://visionda-my.sharepoint.com/personal/visionda_visionda_onmicrosoft_com/_layouts/15/onedrive.aspx?id=%2Fpersonal%2Fvisionda%5Fvisionda%5Fonmicrosoft%5Fcom%2FDocuments%2FDesktop%2FProjects%2FEshan&ga=1"
        target="_blank"
        rel="noopener noreferrer"
@@ -45,7 +66,6 @@
       <div class="tile-sub">فتح ملفات التحليل والتقارير</div>
     </a>
     {% endif %}
-
 
   </div>
 </div>

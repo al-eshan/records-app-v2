@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-tiles">
+  <div class="page-titlebar d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <h3>تفاصيل العميل - {{ es }}</h3>
+      <span class="text-muted">عرض كامل بيانات سجل الدين</span>
+    </div>
+    <a href="{{ url_for('accounting_debts_branch', es=es) }}" class="btn btn-secondary">رجوع</a>
+  </div>
+
+  <div class="tile-card">
+    <div class="row g-3">
+      <div class="col-12 col-md-4"><strong>رقم الفاتورة:</strong> {{ row.invoice_no }}</div>
+      <div class="col-12 col-md-4"><strong>تاريخ الفاتورة:</strong> {{ row.invoice_date or "-" }}</div>
+      <div class="col-12 col-md-4"><strong>اسم العميل:</strong> {{ row.customer_name }}</div>
+      <div class="col-12 col-md-4"><strong>رقم الجوال:</strong> {{ row.mobile or "-" }}</div>
+      <div class="col-12 col-md-8"><strong>العنوان:</strong> {{ row.address or "-" }}</div>
+      <div class="col-12 col-md-4"><strong>إجمالي الفاتورة:</strong> {{ "%.2f"|format(row.invoice_total or 0) }}</div>
+      <div class="col-12 col-md-4"><strong>المبلغ المسدد:</strong> {{ "%.2f"|format(row.paid_amount or 0) }}</div>
+      <div class="col-12 col-md-4"><strong>المبلغ المتبقي:</strong> {{ "%.2f"|format(row.remaining_amount or 0) }}</div>
+      <div class="col-12 col-md-4"><strong>تاريخ الإنشاء:</strong> {{ row.created_at }}</div>
+      <div class="col-12 col-md-4"><strong>آخر تحديث:</strong> {{ row.updated_at or "-" }}</div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

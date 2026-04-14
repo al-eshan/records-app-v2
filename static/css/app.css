@@ -342,7 +342,7 @@ body{
   text-align:center;
   vertical-align: middle;
   /* ✅ مهم: النص واضح فوق الزجاج */
-  color: #111;
+  color: #fff;
 }
 
 /* Hover */
