@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 
-<div class="container-fluid" style="max-width: 1100px;">
+<div class="page-tiles">
 
   <!-- ===== Header ===== -->
-  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div class="page-titlebar d-flex justify-content-between align-items-center flex-wrap gap-2">
     <div>
-      <h4 class="mb-1">سجلات {{ kind }}</h4>
-      <div class="text-muted small">متابعة وتحديث السجلات</div>
+      <h3 class="m-0">سجلات {{ kind }}</h3>
+      <span class="text-muted">متابعة وتحديث السجلات</span>
     </div>
 
     <a href="/records/{{ kind }}/new"
@@ -17,52 +17,60 @@
   </div>
 
   <!-- ===== Table ===== -->
-  <div class="table-wrap table-responsive">
-    <table class="table table-hover align-middle mb-0">
-      <thead>
-        <tr>
-          <th>النوع</th>
-          <th>الرقم</th>
-          <th>تاريخ الانتهاء</th>
-          <th>المتبقي</th>
-          <th style="width:140px;">إجراء</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% if rows|length == 0 %}
+  <div class="tile-card">
+    <div class="table-responsive">
+      <table class="table table-bordered table-striped align-middle text-center">
+
+        <thead>
+          <tr>
+            <th>النوع</th>
+            <th>الرقم</th>
+            <th>تاريخ الانتهاء</th>
+            <th>المتبقي</th>
+            <th style="width:160px;">إجراء</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {% if rows|length == 0 %}
           <tr>
             <td colspan="5" class="text-center text-muted py-4">
               لا توجد سجلات
             </td>
           </tr>
-        {% endif %}
+          {% endif %}
 
-        {% for r in rows %}
-        <tr class="{{ status_color(r.expiry_date) }}">
-          <td class="fw-semibold">{{ r.record_type }}</td>
-          <td>{{ r.record_number }}</td>
-          <td>{{ r.expiry_date or "-" }}</td>
-          <td>{{ days_left(r.expiry_date) or "-" }}</td>
-          <td>
-            <div class="d-flex gap-1 flex-wrap justify-content-center">
-              <a href="/records/{{ kind }}/{{ r.id }}/edit"
-                 class="btn btn-sm btn-outline-warning">
-                تعديل
-              </a>
+          {% for r in rows %}
+          <tr class="{{ status_color(r.expiry_date) }}">
+            <td class="fw-semibold">{{ r.record_type }}</td>
+            <td>{{ r.record_number }}</td>
+            <td>{{ r.expiry_date or "-" }}</td>
+            <td>{{ days_left(r.expiry_date) or "-" }}</td>
 
-              <form method="post"
-                    action="/records/{{ kind }}/{{ r.id }}/delete"
-                    onsubmit="return confirm('حذف هذا السجل؟');">
-                <button class="btn btn-sm btn-outline-danger">
-                  حذف
-                </button>
-              </form>
-            </div>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+            <td>
+              <div class="d-flex gap-1 flex-wrap justify-content-center">
+
+                <a href="/records/{{ kind }}/{{ r.id }}/edit"
+                   class="btn btn-sm btn-warning">
+                  تعديل
+                </a>
+
+                <form method="post"
+                      action="/records/{{ kind }}/{{ r.id }}/delete"
+                      onsubmit="return confirm('حذف هذا السجل؟');">
+                  <button class="btn btn-sm btn-danger">
+                    حذف
+                  </button>
+                </form>
+
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+
+      </table>
+    </div>
   </div>
 
 </div>

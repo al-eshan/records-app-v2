@@ -162,30 +162,32 @@ def ensure_financial_commitments_schema(db):
 
 
 def ensure_debts_ledger_schema(db):
-    """Ensure debts_ledger table exists and has all required columns."""
     db.execute("""
     CREATE TABLE IF NOT EXISTS debts_ledger (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         es TEXT NOT NULL,
-        invoice_no TEXT NOT NULL,
         invoice_date TEXT,
-        customer_name TEXT NOT NULL,
+        customer_name TEXT,
         mobile TEXT,
         address TEXT,
-        invoice_total REAL NOT NULL DEFAULT 0,
-        paid_amount REAL NOT NULL DEFAULT 0,
-        remaining_amount REAL NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        invoice_total REAL DEFAULT 0,
+        paid_amount REAL DEFAULT 0,
+        remaining_amount REAL DEFAULT 0,
+        last_sent_at TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT
     )
     """)
 
     cols = [r[1] for r in db.execute("PRAGMA table_info(debts_ledger)").fetchall()]
 
+    if "last_sent_at" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN last_sent_at TEXT")
+
+    db.commit()
+
     if "es" not in cols:
         db.execute("ALTER TABLE debts_ledger ADD COLUMN es TEXT NOT NULL DEFAULT 'ES1'")
-    if "invoice_no" not in cols:
-        db.execute("ALTER TABLE debts_ledger ADD COLUMN invoice_no TEXT NOT NULL DEFAULT ''")
     if "invoice_date" not in cols:
         db.execute("ALTER TABLE debts_ledger ADD COLUMN invoice_date TEXT")
     if "customer_name" not in cols:
@@ -204,6 +206,7 @@ def ensure_debts_ledger_schema(db):
         db.execute("ALTER TABLE debts_ledger ADD COLUMN created_at TEXT")
     if "updated_at" not in cols:
         db.execute("ALTER TABLE debts_ledger ADD COLUMN updated_at TEXT")
+
 
     db.commit()
 
@@ -1199,11 +1202,86 @@ def accounting_commitments_home():
     total = float(sum([_to_float(r["amount"], 0) for r in rows]))
 
     return render_template("accounting_commitments_home.html", rows=rows, total=total)
+
+from urllib.parse import quote
+
+
 @app.route("/accounting/debts")
 @login_required
 @permission_required("accounting_home")
 def accounting_debts_home():
     return render_template("accounting_debts_home.html")
+
+
+def normalize_sa_mobile_for_whatsapp(mobile):
+    mobile = str(mobile or "").strip()
+    mobile = mobile.replace(" ", "").replace("-", "").replace("+", "")
+
+    if mobile.startswith("0"):
+        mobile = "966" + mobile[1:]
+
+    if mobile.startswith("5"):
+        mobile = "966" + mobile
+
+    return mobile
+
+
+def build_debt_whatsapp_message(customer_name, remaining_amount):
+    return (
+        f"هذه الرسالة من مؤسسة ال عِشان لقطع غيار السيارات\n"
+        f"عميلنا العزيز {customer_name} يوجد مبلغ مستحق عليكم وقدره {remaining_amount:.2f} ريال، "
+        f"نأمل منكم السداد أو التحويل على حسابنا البنكي في مصرف الراجحي\n"
+        f"رقم الحساب 257000010006080319523\n"
+        f"رقم الآيبان SA8180000257608010319523\n"
+        f"وفي حال التحويل ابلاغنا وارسال الايصال البنكي للمعالجة\n"
+        f"وشكراً لكم على تعاونكم ..."
+    )
+
+
+@app.route("/accounting/debts/<es>/whatsapp/<int:row_id>")
+@login_required
+def accounting_debts_whatsapp(es, row_id):
+    db = get_db()
+    ensure_debts_ledger_schema(db)
+
+    es = (es or "").strip().upper()
+    if es not in ["ES1", "ES2", "ES3"]:
+        flash("الفرع غير صحيح", "danger")
+        return redirect(url_for("accounting_home"))
+
+    perm_map = {
+        "ES1": "debts_es1",
+        "ES2": "debts_es2",
+        "ES3": "debts_es3",
+    }
+
+    needed_perm = perm_map[es]
+    if not (session.get("perms") and session["perms"].get(needed_perm)):
+        flash("ليس لديك صلاحية للوصول إلى هذه الصفحة", "danger")
+        return redirect(url_for("home"))
+
+    row = db.execute("""
+        SELECT *
+        FROM debts_ledger
+        WHERE id = ? AND es = ?
+    """, (row_id, es)).fetchone()
+
+    if not row:
+        flash("السجل غير موجود", "danger")
+        return redirect(url_for("accounting_debts_branch", es=es))
+
+    phone = normalize_sa_mobile_for_whatsapp(row["mobile"])
+    if not phone:
+        flash("رقم جوال العميل غير موجود", "danger")
+        return redirect(url_for("accounting_debts_branch", es=es))
+
+    msg = build_debt_whatsapp_message(
+        row["customer_name"],
+        float(row["remaining_amount"] or 0)
+    )
+
+    whatsapp_url = f"https://wa.me/{phone}?text={quote(msg)}"
+    return redirect(whatsapp_url)
 
 
 @app.route("/accounting/debts/<es>", methods=["GET", "POST"])
@@ -1231,7 +1309,6 @@ def accounting_debts_branch(es):
     action = (request.form.get("action") or "").strip()
 
     if request.method == "POST":
-        invoice_no = (request.form.get("invoice_no") or "").strip()
         invoice_date = (request.form.get("invoice_date") or "").strip()
         customer_name = (request.form.get("customer_name") or "").strip()
         mobile = (request.form.get("mobile") or "").strip()
@@ -1241,8 +1318,8 @@ def accounting_debts_branch(es):
         remaining_amount = invoice_total - paid_amount
 
         if action == "add":
-            if not invoice_no or not customer_name:
-                flash("رقم الفاتورة واسم العميل مطلوبان", "danger")
+            if not customer_name:
+                flash("اسم العميل مطلوب", "danger")
             else:
                 db.execute("""
                     INSERT INTO debts_ledger (
@@ -1251,24 +1328,22 @@ def accounting_debts_branch(es):
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    es, invoice_no, invoice_date, customer_name, mobile, address,
+                    es, "", invoice_date, customer_name, mobile, address,
                     invoice_total, paid_amount, remaining_amount
                 ))
                 db.commit()
                 flash("تمت إضافة العميل بنجاح", "success")
-                return redirect(url_for("accounting_debts_branch", es=es))
 
         elif action == "update":
             row_id = (request.form.get("id") or "").strip()
             if not row_id:
                 flash("معرّف السجل غير موجود", "danger")
-            elif not invoice_no or not customer_name:
-                flash("رقم الفاتورة واسم العميل مطلوبان", "danger")
+            elif not customer_name:
+                flash("اسم العميل مطلوب", "danger")
             else:
                 db.execute("""
                     UPDATE debts_ledger
-                    SET invoice_no = ?,
-                        invoice_date = ?,
+                    SET invoice_date = ?,
                         customer_name = ?,
                         mobile = ?,
                         address = ?,
@@ -1278,21 +1353,39 @@ def accounting_debts_branch(es):
                         updated_at = datetime('now')
                     WHERE id = ? AND es = ?
                 """, (
-                    invoice_no, invoice_date, customer_name, mobile, address,
+                    invoice_date, customer_name, mobile, address,
                     invoice_total, paid_amount, remaining_amount,
                     row_id, es
                 ))
                 db.commit()
                 flash("تم تعديل السجل", "success")
-                return redirect(url_for("accounting_debts_branch", es=es))
+
+        elif action == "mark_sent":
+            row_id = (request.form.get("id") or "").strip()
+            if row_id:
+                db.execute("""
+                    UPDATE debts_ledger
+                    SET last_sent_at = datetime('now'),
+                        updated_at = datetime('now')
+                    WHERE id = ? AND es = ?
+                """, (row_id, es))
+                db.commit()
+                flash("تم تسجيل تاريخ الإرسال", "success")
 
         elif action == "delete":
             row_id = (request.form.get("id") or "").strip()
             if row_id:
-                db.execute("DELETE FROM debts_ledger WHERE id = ? AND es = ?", (row_id, es))
+                db.execute("""
+                    DELETE FROM debts_ledger
+                    WHERE id = ? AND es = ?
+                """, (row_id, es))
                 db.commit()
                 flash("تم حذف السجل", "warning")
-            return redirect(url_for("accounting_debts_branch", es=es))
+
+        # 👇 رجوع واحد فقط
+        return redirect(url_for("accounting_debts_branch", es=es))
+
+    # ================= GET =================
 
     rows = db.execute("""
         SELECT *
@@ -1323,7 +1416,6 @@ def accounting_debts_branch(es):
         total_paid=total_paid,
         total_remaining=total_remaining,
     )
-
 
 @app.route("/accounting/debts/<es>/detail/<int:row_id>")
 @login_required
@@ -1383,8 +1475,9 @@ def accounting_debts_export(es):
         return redirect(url_for("home"))
 
     rows = db.execute("""
-        SELECT invoice_no, invoice_date, customer_name, mobile, address,
-               invoice_total, paid_amount, remaining_amount, created_at, updated_at
+        SELECT invoice_date, customer_name, mobile, address,
+               invoice_total, paid_amount, remaining_amount,
+               last_sent_at, created_at, updated_at
         FROM debts_ledger
         WHERE es = ?
         ORDER BY id DESC
@@ -1395,7 +1488,6 @@ def accounting_debts_export(es):
     ws.title = f"دفتر الديون {es}"
 
     ws.append([
-        "رقم الفاتورة",
         "تاريخ الفاتورة",
         "اسم العميل",
         "رقم الجوال",
@@ -1403,13 +1495,13 @@ def accounting_debts_export(es):
         "إجمالي الفاتورة",
         "المبلغ المسدد",
         "المبلغ المتبقي",
+        "آخر تاريخ للإرسال",
         "تاريخ الإنشاء",
         "آخر تحديث",
     ])
 
     for r in rows:
         ws.append([
-            r["invoice_no"],
             r["invoice_date"],
             r["customer_name"],
             r["mobile"],
@@ -1417,6 +1509,7 @@ def accounting_debts_export(es):
             r["invoice_total"],
             r["paid_amount"],
             r["remaining_amount"],
+            r["last_sent_at"],
             r["created_at"],
             r["updated_at"],
         ])
@@ -1431,6 +1524,8 @@ def accounting_debts_export(es):
         download_name=f"debts_{es}.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+
 @app.route("/suggestions", methods=["GET", "POST"])
 @login_required
 def suggestions_page():

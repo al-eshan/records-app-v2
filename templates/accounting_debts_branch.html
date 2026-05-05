@@ -7,11 +7,11 @@
       <h3>دفتر الديون {{ es }}</h3>
       <span class="text-muted">إضافة العملاء ومتابعة المبالغ المستحقة</span>
     </div>
+
     <div class="d-flex gap-2">
       <a href="{{ url_for('accounting_debts_export', es=es) }}" class="btn btn-success">
         تصدير Excel
       </a>
-
     </div>
   </div>
 
@@ -25,12 +25,6 @@
       {% if edit_row %}
         <input type="hidden" name="id" value="{{ edit_row.id }}">
       {% endif %}
-
-      <div class="col-12 col-md-4">
-        <label class="form-label">رقم الفاتورة</label>
-        <input type="text" name="invoice_no" class="form-control"
-               value="{{ edit_row.invoice_no if edit_row else '' }}" required>
-      </div>
 
       <div class="col-12 col-md-4">
         <label class="form-label">تاريخ الفاتورة</label>
@@ -97,17 +91,19 @@
   <div class="tile-card mb-4">
     <div class="row g-3">
       <div class="col-12 col-md-4">
-        <div class="border rounded p-3">
+        <div class="totals-card p-3">
           <strong>إجمالي مبالغ الفواتير:</strong> {{ "%.2f"|format(total_invoice) }}
         </div>
       </div>
+
       <div class="col-12 col-md-4">
-        <div class="border rounded p-3">
+        <div class="totals-card p-3">
           <strong>إجمالي المسدد:</strong> {{ "%.2f"|format(total_paid) }}
         </div>
       </div>
+
       <div class="col-12 col-md-4">
-        <div class="border rounded p-3">
+        <div class="totals-card p-3">
           <strong>إجمالي المتبقي:</strong> {{ "%.2f"|format(total_remaining) }}
         </div>
       </div>
@@ -124,7 +120,6 @@
         <table class="table table-bordered table-striped align-middle text-center">
           <thead>
             <tr>
-              <th>رقم الفاتورة</th>
               <th>تاريخ الفاتورة</th>
               <th>اسم العميل</th>
               <th>رقم الجوال</th>
@@ -132,13 +127,14 @@
               <th>إجمالي الفاتورة</th>
               <th>المبلغ المسدد</th>
               <th>المبلغ المتبقي</th>
+              <th>آخر تاريخ للإرسال</th>
               <th>الإجراءات</th>
             </tr>
           </thead>
+
           <tbody>
             {% for row in rows %}
             <tr>
-              <td>{{ row.invoice_no }}</td>
               <td>{{ row.invoice_date or "-" }}</td>
               <td>{{ row.customer_name }}</td>
               <td>{{ row.mobile or "-" }}</td>
@@ -146,15 +142,35 @@
               <td>{{ "%.2f"|format(row.invoice_total or 0) }}</td>
               <td>{{ "%.2f"|format(row.paid_amount or 0) }}</td>
               <td>{{ "%.2f"|format(row.remaining_amount or 0) }}</td>
+              <td>{{ row.last_sent_at or "-" }}</td>
               <td>
                 <div class="d-flex justify-content-center gap-1 flex-wrap">
-                  <a href="{{ url_for('accounting_debts_detail', es=es, row_id=row.id) }}" class="btn btn-sm btn-info">
+                  <a href="{{ url_for('accounting_debts_whatsapp', es=es, row_id=row.id) }}"
+                     target="_blank"
+                     class="btn btn-sm btn-success">
+                    إرسال رسالة
+                  </a>
+
+                  <form method="post" style="display:inline;">
+                    <input type="hidden" name="action" value="mark_sent">
+                    <input type="hidden" name="id" value="{{ row.id }}">
+                    <button type="submit" class="btn btn-sm btn-primary">
+                      تم الإرسال
+                    </button>
+                  </form>
+
+                  <a href="{{ url_for('accounting_debts_detail', es=es, row_id=row.id) }}"
+                     class="btn btn-sm btn-info">
                     تفاصيل
                   </a>
-                  <a href="{{ url_for('accounting_debts_branch', es=es, edit_id=row.id) }}" class="btn btn-sm btn-warning">
+
+                  <a href="{{ url_for('accounting_debts_branch', es=es, edit_id=row.id) }}"
+                     class="btn btn-sm btn-warning">
                     تعديل
                   </a>
-                  <form method="post" style="display:inline;" onsubmit="return confirm('هل أنت متأكد من حذف هذا السجل؟');">
+
+                  <form method="post" style="display:inline;"
+                        onsubmit="return confirm('هل أنت متأكد من حذف هذا السجل؟');">
                     <input type="hidden" name="action" value="delete">
                     <input type="hidden" name="id" value="{{ row.id }}">
                     <button type="submit" class="btn btn-sm btn-danger">
@@ -182,6 +198,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const total = parseFloat(totalInput?.value || 0);
     const paid = parseFloat(paidInput?.value || 0);
     const remaining = total - paid;
+
     if (remainingInput) {
       remainingInput.value = remaining.toFixed(2);
     }

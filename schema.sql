@@ -165,7 +165,6 @@ CREATE TABLE IF NOT EXISTS financial_commitments (
 CREATE TABLE IF NOT EXISTS debts_ledger (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     es TEXT NOT NULL,
-    invoice_no TEXT NOT NULL,
     invoice_date TEXT,
     customer_name TEXT NOT NULL,
     mobile TEXT,
