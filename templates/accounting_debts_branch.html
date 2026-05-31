@@ -9,9 +9,9 @@
     </div>
 
     <div class="d-flex gap-2">
-      <a href="{{ url_for('accounting_debts_export', es=es) }}" class="btn btn-success">
-        تصدير Excel
-      </a>
+<a href="{{ url_for('accounting_debts_export', es=es) }}" class="btn btn-success">
+  تصدير Excel
+</a>
     </div>
   </div>
 
@@ -32,6 +32,27 @@
                value="{{ edit_row.invoice_date if edit_row else '' }}">
       </div>
 
+<div class="col-12 col-md-4">
+  <label class="form-label">الفرع</label>
+  <select name="branch_es" class="form-select">
+
+    <option value="ES1"
+      {% if (edit_row and edit_row.es == 'ES1') or (not edit_row and es == 'ES1') %}selected{% endif %}>
+      ES1
+    </option>
+
+    <option value="ES2"
+      {% if (edit_row and edit_row.es == 'ES2') or (not edit_row and es == 'ES2') %}selected{% endif %}>
+      ES2
+    </option>
+
+    <option value="ES3"
+      {% if (edit_row and edit_row.es == 'ES3') or (not edit_row and es == 'ES3') %}selected{% endif %}>
+      ES3
+    </option>
+
+  </select>
+</div>
       <div class="col-12 col-md-4">
         <label class="form-label">اسم العميل</label>
         <input type="text" name="customer_name" class="form-control"
@@ -89,6 +110,35 @@
   </div>
 
   <div class="tile-card mb-4">
+    <h5 class="mb-3">البحث</h5>
+
+    <form method="get" class="row g-2 align-items-end mb-0">
+      <div class="col-12 col-md-8">
+        <label class="form-label">بحث عن عميل</label>
+        <input
+          type="text"
+          name="q"
+          class="form-control"
+          placeholder="ابحث باسم العميل أو رقم الجوال"
+          value="{{ request.args.get('q', '') }}"
+        >
+      </div>
+
+      <div class="col-6 col-md-2 d-grid">
+        <button type="submit" class="btn btn-primary">
+          بحث
+        </button>
+      </div>
+
+      <div class="col-6 col-md-2 d-grid">
+        <a href="{{ url_for('accounting_debts_branch', es=es) }}" class="btn btn-secondary">
+          مسح
+        </a>
+      </div>
+    </form>
+  </div>
+
+  <div class="tile-card mb-4">
     <div class="row g-3">
       <div class="col-12 col-md-4">
         <div class="totals-card p-3">
@@ -121,6 +171,7 @@
           <thead>
             <tr>
               <th>تاريخ الفاتورة</th>
+            <th>الفرع</th>
               <th>اسم العميل</th>
               <th>رقم الجوال</th>
               <th>العنوان</th>
@@ -136,6 +187,7 @@
             {% for row in rows %}
             <tr>
               <td>{{ row.invoice_date or "-" }}</td>
+            <td>{{ row.es }}</td>
               <td>{{ row.customer_name }}</td>
               <td>{{ row.mobile or "-" }}</td>
               <td>{{ row.address or "-" }}</td>
@@ -145,11 +197,11 @@
               <td>{{ row.last_sent_at or "-" }}</td>
               <td>
                 <div class="d-flex justify-content-center gap-1 flex-wrap">
-                  <a href="{{ url_for('accounting_debts_whatsapp', es=es, row_id=row.id) }}"
-                     target="_blank"
-                     class="btn btn-sm btn-success">
-                    إرسال رسالة
-                  </a>
+<a href="{{ url_for('accounting_debts_whatsapp', es=row.es, row_id=row.id) }}"
+   target="_blank"
+   class="btn btn-sm btn-success">
+  إرسال رسالة
+</a>
 
                   <form method="post" style="display:inline;">
                     <input type="hidden" name="action" value="mark_sent">
@@ -159,12 +211,12 @@
                     </button>
                   </form>
 
-                  <a href="{{ url_for('accounting_debts_detail', es=es, row_id=row.id) }}"
+                  <a href="{{ url_for('accounting_debts_detail', es=row.es, row_id=row.id) }}"
                      class="btn btn-sm btn-info">
                     تفاصيل
                   </a>
 
-                  <a href="{{ url_for('accounting_debts_branch', es=es, edit_id=row.id) }}"
+                  <a href="{{ url_for('accounting_debts_branch', es=row.es, edit_id=row.id) }}"
                      class="btn btn-sm btn-warning">
                     تعديل
                   </a>

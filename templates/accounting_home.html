@@ -24,26 +24,16 @@
       <div class="tile-sub">فتح محاسبة ES3</div>
     </a>
 
-    {% if session.perms and session.perms.get('debts_es1') %}
-    <a href="{{ url_for('accounting_debts_branch', es='ES1') }}" class="tile-card tile-center">
-      <div class="tile-title">دفتر الديون ES1</div>
-      <div class="tile-sub">إدارة ديون عملاء ES1</div>
-    </a>
-    {% endif %}
-
-    {% if session.perms and session.perms.get('debts_es2') %}
-    <a href="{{ url_for('accounting_debts_branch', es='ES2') }}" class="tile-card tile-center">
-      <div class="tile-title">دفتر الديون ES2</div>
-      <div class="tile-sub">إدارة ديون عملاء ES2</div>
-    </a>
-    {% endif %}
-
-    {% if session.perms and session.perms.get('debts_es3') %}
-    <a href="{{ url_for('accounting_debts_branch', es='ES3') }}" class="tile-card tile-center">
-      <div class="tile-title">دفتر الديون ES3</div>
-      <div class="tile-sub">إدارة ديون عملاء ES3</div>
-    </a>
-    {% endif %}
+   {% if session.perms and (
+    session.perms.get('debts_es1')
+    or session.perms.get('debts_es2')
+    or session.perms.get('debts_es3')
+) %}
+<a href="{{ url_for('accounting_debts') }}" class="tile-card tile-center">
+  <div class="tile-title">دفتر الديون</div>
+  <div class="tile-sub">إدارة ديون جميع الفروع</div>
+</a>
+{% endif %}
 
     {% if session.perms and session.perms.get('monthly_commission') %}
     <a href="{{ url_for('monthly_commission') }}" class="tile-card tile-center">

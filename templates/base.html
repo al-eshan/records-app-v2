@@ -85,6 +85,13 @@
 </a>
 {% endif %}
 
+{% if perms.get('important_links') %}
+<a href="{{ url_for('important_links') }}"
+   class="menu-card {% if request.path.startswith('/important-links') %}active{% endif %}">
+  روابط مهمة
+</a>
+{% endif %}
+
         {% if session.get('username') == 'adm-es' and perms.get('permissions') %}
         <a href="{{ url_for('permissions_page') }}" class="menu-card {% if request.path.startswith('/permissions') %}active{% endif %}">
           الصلاحيات

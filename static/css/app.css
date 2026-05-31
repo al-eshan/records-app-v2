@@ -22,8 +22,8 @@
   --thead-bg: rgba(0,0,0,.78);
   --thead-border: rgba(255,255,255,.12);
 
-  --bg-size-desktop: 1200px;
-  --bg-size-1200: 900px;
+  --bg-size-desktop: 55vw;
+  --bg-size-1200: 45vw;
   --bg-size-768: 650px;
 }
 
@@ -53,7 +53,7 @@ body{
   background-image: url("/static/img/background.png");
   background-repeat: no-repeat;
   background-position: left bottom;
-  background-size: var(--bg-size-desktop) auto;
+ background-size: clamp(1200px, 55vw, 1800px) auto;
 
   /* iOS stability */
   transform: translateZ(0);
@@ -110,9 +110,19 @@ body{
 
 .sidebar-nav.cards{
   padding: 16px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 14px;
+}
+
+@media (min-width: 768px){
+  .sidebar-nav.cards{
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.sidebar-footer{
+  grid-column: 1 / -1;
 }
 
 .menu-card{
