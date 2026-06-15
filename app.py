@@ -2152,19 +2152,21 @@ def record_edit(kind, rid: int):
         if not err:
             headers = ["id", "record_type", "record_number", "expiry_date"]
 
-            # ✅ تأكد من الهيدرز أولاً
             ws_ensure_headers(ws, headers)
 
             ok = ws_upsert(
                 ws,
                 headers,
-                [new_id, record_type, record_number, expiry_date or ""],
-                new_id
+                [rid, record_type, record_number, expiry_date or ""],
+                rid
             )
-            if ok is False:
-                print("records export failed (new):", kind, new_id)
-                flash("⚠️ فشل تصدير Google Sheets (records/new) راجع logs", "warning")
 
+            if ok is False:
+                print("records export failed (edit):", kind, rid)
+                flash(
+                    "⚠️ فشل تصدير Google Sheets (records/edit) راجع logs",
+                    "warning"
+                )
 
         flash("تم التعديل بنجاح", "success")
         return redirect(url_for("records_list", kind=kind))
@@ -2194,16 +2196,28 @@ def record_delete(kind, rid: int):
 # =========================
 # Employees
 # =========================
+
+def ensure_employees_schema(db):
+    cols = [r[1] for r in db.execute("PRAGMA table_info(employees)").fetchall()]
+
+    if "nationality" not in cols:
+        db.execute("ALTER TABLE employees ADD COLUMN nationality TEXT")
+    if "mobile" not in cols:
+        db.execute("ALTER TABLE employees ADD COLUMN mobile TEXT")
+    if "bank_account" not in cols:
+        db.execute("ALTER TABLE employees ADD COLUMN bank_account TEXT")
+    if "debts" not in cols:
+        db.execute("ALTER TABLE employees ADD COLUMN debts REAL NOT NULL DEFAULT 0")
+
+    db.commit()
+
+
 @app.route("/employees")
 @login_required
 @permission_required("employees")
 def employees_list():
     db = get_db()
-
-    cols = [r[1] for r in db.execute("PRAGMA table_info(employees)").fetchall()]
-    if "debts" not in cols:
-        db.execute("ALTER TABLE employees ADD COLUMN debts REAL NOT NULL DEFAULT 0")
-        db.commit()
+    ensure_employees_schema(db)
 
     rows = db.execute("""
         SELECT id, name_ar, name_en, nationality, mobile,
@@ -2234,6 +2248,7 @@ def employees_list():
             "bank_account": r["bank_account"],
             "debts": r["debts"],
         })
+
     return render_template("employees_list.html", rows=data)
 
 
@@ -2241,8 +2256,10 @@ def employees_list():
 @login_required
 @permission_required("employees")
 def employee_new():
+    db = get_db()
+    ensure_employees_schema(db)
+
     if request.method == "POST":
-        db = get_db()
         payload = {
             "name_ar": request.form.get("name_ar", "").strip(),
             "name_en": request.form.get("name_en", "").strip(),
@@ -2274,14 +2291,24 @@ def employee_new():
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            payload["name_ar"], payload["name_en"], payload["nationality"], payload["mobile"],
-            payload["passport_no"], payload["passport_expiry"],
-            payload["iqama_no"], payload["iqama_expiry"],
-            payload["insurance_name"], payload["insurance_expiry"],
-            payload["basic_salary"], payload["commission"],
-            payload["bank_account"], payload["debts"],
+            payload["name_ar"],
+            payload["name_en"],
+            payload["nationality"],
+            payload["mobile"],
+            payload["passport_no"],
+            payload["passport_expiry"],
+            payload["iqama_no"],
+            payload["iqama_expiry"],
+            payload["insurance_name"],
+            payload["insurance_expiry"],
+            payload["basic_salary"],
+            payload["commission"],
+            payload["bank_account"],
+            payload["debts"],
         ))
+
         db.commit()
+
         new_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
 
         ws, err = open_ws("employees")
@@ -2293,18 +2320,27 @@ def employee_new():
                 "insurance_name", "insurance_expiry",
                 "basic_salary", "commission", "bank_account", "debts"
             ]
+
+            ws_ensure_headers(ws, headers)
+
             ok = ws_upsert(ws, headers, [
                 new_id,
-                payload["name_ar"], payload["name_en"],
-                payload["nationality"], payload["mobile"],
-                payload["passport_no"], payload["passport_expiry"] or "",
-                payload["iqama_no"], payload["iqama_expiry"] or "",
-                payload["insurance_name"], payload["insurance_expiry"] or "",
+                payload["name_ar"],
+                payload["name_en"],
+                payload["nationality"],
+                payload["mobile"],
+                payload["passport_no"],
+                payload["passport_expiry"] or "",
+                payload["iqama_no"],
+                payload["iqama_expiry"] or "",
+                payload["insurance_name"],
+                payload["insurance_expiry"] or "",
                 payload["basic_salary"] or "",
                 payload["commission"] or "",
                 payload["bank_account"],
                 payload["debts"],
             ], new_id)
+
             if not ok:
                 flash("⚠️ فشل تصدير Google Sheets (employees/new) راجع logs", "warning")
 
@@ -2319,12 +2355,16 @@ def employee_new():
 @permission_required("employees")
 def employee_detail(eid: int):
     db = get_db()
+    ensure_employees_schema(db)
+
     r = db.execute("SELECT * FROM employees WHERE id=?", (eid,)).fetchone()
+
     if r is None:
         flash("الموظف غير موجود", "danger")
         return redirect(url_for("employees_list"))
 
     row = dict(r)
+
     for k in ("passport_expiry", "iqama_expiry", "insurance_expiry"):
         row[k] = parse_date(row[k]) if row.get(k) else None
 
@@ -2336,7 +2376,10 @@ def employee_detail(eid: int):
 @permission_required("employees")
 def employee_edit(eid: int):
     db = get_db()
+    ensure_employees_schema(db)
+
     row = db.execute("SELECT * FROM employees WHERE id=?", (eid,)).fetchone()
+
     if row is None:
         flash("الموظف غير موجود", "danger")
         return redirect(url_for("employees_list"))
@@ -2381,15 +2424,23 @@ def employee_edit(eid: int):
                 debts=?
             WHERE id=?
         """, (
-            payload["name_ar"], payload["name_en"],
-            payload["nationality"], payload["mobile"],
-            payload["passport_no"], payload["passport_expiry"],
-            payload["iqama_no"], payload["iqama_expiry"],
-            payload["insurance_name"], payload["insurance_expiry"],
-            payload["basic_salary"], payload["commission"],
-            payload["bank_account"], payload["debts"],
+            payload["name_ar"],
+            payload["name_en"],
+            payload["nationality"],
+            payload["mobile"],
+            payload["passport_no"],
+            payload["passport_expiry"],
+            payload["iqama_no"],
+            payload["iqama_expiry"],
+            payload["insurance_name"],
+            payload["insurance_expiry"],
+            payload["basic_salary"],
+            payload["commission"],
+            payload["bank_account"],
+            payload["debts"],
             eid,
         ))
+
         db.commit()
 
         ws, err = open_ws("employees")
@@ -2401,18 +2452,27 @@ def employee_edit(eid: int):
                 "insurance_name", "insurance_expiry",
                 "basic_salary", "commission", "bank_account", "debts"
             ]
+
+            ws_ensure_headers(ws, headers)
+
             ok = ws_upsert(ws, headers, [
                 eid,
-                payload["name_ar"], payload["name_en"],
-                payload["nationality"], payload["mobile"],
-                payload["passport_no"], payload["passport_expiry"] or "",
-                payload["iqama_no"], payload["iqama_expiry"] or "",
-                payload["insurance_name"], payload["insurance_expiry"] or "",
+                payload["name_ar"],
+                payload["name_en"],
+                payload["nationality"],
+                payload["mobile"],
+                payload["passport_no"],
+                payload["passport_expiry"] or "",
+                payload["iqama_no"],
+                payload["iqama_expiry"] or "",
+                payload["insurance_name"],
+                payload["insurance_expiry"] or "",
                 payload["basic_salary"] or "",
                 payload["commission"] or "",
                 payload["bank_account"],
                 payload["debts"],
             ], eid)
+
             if not ok:
                 flash("⚠️ فشل تصدير Google Sheets (employees/edit) راجع logs", "warning")
 
@@ -2427,8 +2487,10 @@ def employee_edit(eid: int):
 @permission_required("employees")
 def employee_delete(eid: int):
     db = get_db()
+    ensure_employees_schema(db)
 
     row = db.execute("SELECT id FROM employees WHERE id=?", (eid,)).fetchone()
+
     if not row:
         flash("الموظف غير موجود", "warning")
         return redirect(url_for("employees_list"))
