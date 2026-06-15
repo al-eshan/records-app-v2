@@ -24,16 +24,16 @@
       <div class="tile-sub">فتح محاسبة ES3</div>
     </a>
 
-   {% if session.perms and (
-    session.perms.get('debts_es1')
-    or session.perms.get('debts_es2')
-    or session.perms.get('debts_es3')
-) %}
-<a href="{{ url_for('accounting_debts') }}" class="tile-card tile-center">
-  <div class="tile-title">دفتر الديون</div>
-  <div class="tile-sub">إدارة ديون جميع الفروع</div>
-</a>
-{% endif %}
+    {% if session.perms and (
+      session.perms.get('debts_es1')
+      or session.perms.get('debts_es2')
+      or session.perms.get('debts_es3')
+    ) %}
+    <a href="{{ url_for('accounting_debts') }}" class="tile-card tile-center">
+      <div class="tile-title">دفتر الديون</div>
+      <div class="tile-sub">إدارة ديون جميع الفروع</div>
+    </a>
+    {% endif %}
 
     {% if session.perms and session.perms.get('monthly_commission') %}
     <a href="{{ url_for('monthly_commission') }}" class="tile-card tile-center">
@@ -42,16 +42,18 @@
     </a>
     {% endif %}
 
+    {% if session.perms and session.perms.get('financial_commitments') %}
     <a href="{{ url_for('accounting_commitments_home') }}" class="tile-card tile-center">
       <div class="tile-title">الالتزامات المالية</div>
       <div class="tile-sub">إدارة ومتابعة الالتزامات</div>
     </a>
+    {% endif %}
 
     {% if session.perms and session.perms.get('accounting_analytics') %}
     <a href="https://visionda-my.sharepoint.com/personal/visionda_visionda_onmicrosoft_com/_layouts/15/onedrive.aspx?id=%2Fpersonal%2Fvisionda%5Fvisionda%5Fonmicrosoft%5Fcom%2FDocuments%2FDesktop%2FProjects%2FEshan&ga=1"
        target="_blank"
        rel="noopener noreferrer"
-       class="tile-card text-center">
+       class="tile-card tile-center">
       <div class="tile-title">التحليلات المحاسبية</div>
       <div class="tile-sub">فتح ملفات التحليل والتقارير</div>
     </a>
