@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- =========================
--- permissions: one row per (user, perm_key)
+-- permissions
 -- =========================
 CREATE TABLE IF NOT EXISTS permissions (
   user_id INTEGER NOT NULL,
@@ -23,11 +23,11 @@ CREATE TABLE IF NOT EXISTS permissions (
 );
 
 -- =========================
--- Monthly Commissions (الشهور)
+-- Monthly Commissions
 -- =========================
 CREATE TABLE IF NOT EXISTS monthly_commissions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  month TEXT NOT NULL UNIQUE,              -- YYYY-MM
+  month TEXT NOT NULL UNIQUE,
   sales_before_tax REAL NOT NULL DEFAULT 0,
   total_commission REAL NOT NULL DEFAULT 0,
   employee_commission REAL NOT NULL DEFAULT 0,
@@ -36,17 +36,16 @@ CREATE TABLE IF NOT EXISTS monthly_commissions (
 );
 
 -- =========================
--- Monthly Commission Settings (إعدادات العمولة: صف واحد فقط id=1)
+-- Monthly Commission Settings
 -- =========================
 CREATE TABLE IF NOT EXISTS monthly_commission_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
-  commission_rate REAL NOT NULL DEFAULT 0.008,  -- 0.8% = 0.008
-  fixed_deduction REAL NOT NULL DEFAULT 200,    -- 200
-  employees_count INTEGER NOT NULL DEFAULT 6,   -- 6
+  commission_rate REAL NOT NULL DEFAULT 0.008,
+  fixed_deduction REAL NOT NULL DEFAULT 200,
+  employees_count INTEGER NOT NULL DEFAULT 6,
   updated_at TEXT
 );
 
--- row default (id=1)
 INSERT OR IGNORE INTO monthly_commission_settings
 (id, commission_rate, fixed_deduction, employees_count, updated_at)
 VALUES
@@ -95,9 +94,10 @@ CREATE TABLE IF NOT EXISTS employees (
   insurance_name TEXT,
   insurance_expiry TEXT,
 
-  basic_salary TEXT,
-  commission TEXT,
-  bank_account TEXT
+  basic_salary REAL NOT NULL DEFAULT 0,
+  commission REAL NOT NULL DEFAULT 0,
+  bank_account TEXT,
+  debts REAL NOT NULL DEFAULT 0
 );
 
 -- =========================
@@ -111,21 +111,40 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 -- =========================
--- Daily Accounting (المحاسبة اليومية) — معزولة لكل فرع ES
+-- suggestions
+-- =========================
+CREATE TABLE IF NOT EXISTS suggestions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  text TEXT NOT NULL,
+  status TEXT DEFAULT 'pending',
+  admin_note TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- =========================
+-- Daily Accounting Header
 -- =========================
 CREATE TABLE IF NOT EXISTS daily_header (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  es TEXT NOT NULL,                 -- ES1 / ES2 / ES3
-  day_date TEXT NOT NULL,           -- YYYY-MM-DD
+  es TEXT NOT NULL,
+  day_date TEXT NOT NULL,
+
   cash_start REAL NOT NULL DEFAULT 0,
-  cash_end   REAL NOT NULL DEFAULT 0,
+  cash_end REAL NOT NULL DEFAULT 0,
+  cash_received REAL NOT NULL DEFAULT 0,
+  mada REAL NOT NULL DEFAULT 0,
   total_in_enjaz REAL NOT NULL DEFAULT 0,
+
   notes TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT,
+
   UNIQUE(es, day_date)
 );
 
+-- =========================
+-- Daily Accounting: المشتريات النقدية
+-- =========================
 CREATE TABLE IF NOT EXISTS daily_inputs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   header_id INTEGER NOT NULL,
@@ -134,14 +153,35 @@ CREATE TABLE IF NOT EXISTS daily_inputs (
   FOREIGN KEY (header_id) REFERENCES daily_header(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS daily_expenses_general (
+-- =========================
+-- Daily Accounting: مدفوعات تمارا وإمكان
+-- =========================
+CREATE TABLE IF NOT EXISTS daily_tamara_emkan (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   header_id INTEGER NOT NULL,
-  expense_type TEXT NOT NULL,
+  pay_type TEXT NOT NULL,
   amount REAL NOT NULL DEFAULT 0,
   FOREIGN KEY (header_id) REFERENCES daily_header(id) ON DELETE CASCADE
 );
 
+-- =========================
+-- Daily Accounting: المدفوعات الآجلة وسدادها
+-- payment_kind:
+-- debt    = دين / موجب
+-- payment = سداد / سالب
+-- =========================
+CREATE TABLE IF NOT EXISTS daily_expenses_general (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  header_id INTEGER NOT NULL,
+  expense_type TEXT NOT NULL,
+  payment_kind TEXT NOT NULL DEFAULT 'debt',
+  amount REAL NOT NULL DEFAULT 0,
+  FOREIGN KEY (header_id) REFERENCES daily_header(id) ON DELETE CASCADE
+);
+
+-- =========================
+-- Daily Accounting: المصروفات النثرية
+-- =========================
 CREATE TABLE IF NOT EXISTS daily_expenses_petty (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   header_id INTEGER NOT NULL,
@@ -152,26 +192,40 @@ CREATE TABLE IF NOT EXISTS daily_expenses_petty (
 
 CREATE INDEX IF NOT EXISTS idx_daily_header_es_date
 ON daily_header(es, day_date);
--- جدول الالتزامات المالية (عام – بدون فروع)
+
+-- =========================
+-- Financial Commitments
+-- =========================
 CREATE TABLE IF NOT EXISTS financial_commitments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   party TEXT NOT NULL,
   amount REAL NOT NULL DEFAULT 0,
-  task_id INTEGER,              -- ربط مباشر بالمهمة
+  task_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT
 );
 
+-- =========================
+-- Debts Ledger
+-- =========================
 CREATE TABLE IF NOT EXISTS debts_ledger (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    es TEXT NOT NULL,
-    invoice_date TEXT,
-    customer_name TEXT NOT NULL,
-    mobile TEXT,
-    address TEXT,
-    invoice_total REAL NOT NULL DEFAULT 0,
-    paid_amount REAL NOT NULL DEFAULT 0,
-    remaining_amount REAL NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  es TEXT NOT NULL,
+  invoice_no TEXT NOT NULL DEFAULT '',
+  invoice_date TEXT,
+  customer_name TEXT NOT NULL,
+  mobile TEXT,
+  address TEXT,
+  invoice_total REAL NOT NULL DEFAULT 0,
+  paid_amount REAL NOT NULL DEFAULT 0,
+  remaining_amount REAL NOT NULL DEFAULT 0,
+  last_sent_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_debts_ledger_es
+ON debts_ledger(es);
+
+CREATE INDEX IF NOT EXISTS idx_debts_ledger_customer_mobile
+ON debts_ledger(customer_name, mobile);

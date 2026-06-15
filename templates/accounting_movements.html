@@ -60,7 +60,6 @@
   <div class="tile-card">
     <div class="w-100">
 
-      <!-- Header -->
       <div class="page-titlebar d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
           <h3 class="m-0">استعلام حركات المحاسبة اليومية — {{ kind }}</h3>
@@ -73,7 +72,6 @@
         </div>
       </div>
 
-      <!-- Filters -->
       <form method="get" class="row g-3 align-items-end mb-4">
         <div class="col-12 col-md-4">
           <label class="form-label">من تاريخ</label>
@@ -87,7 +85,6 @@
 
         <div class="col-12 col-md-4 d-flex gap-2">
           <button class="btn btn-success flex-grow-1 flex-md-grow-0" type="submit">بحث</button>
-
           <a class="btn btn-secondary flex-grow-1 flex-md-grow-0"
              href="{{ url_for('accounting_movements', kind=kind, **{'from': date_from, 'to': date_to}) }}">
             تحديث
@@ -95,7 +92,6 @@
         </div>
       </form>
 
-      <!-- Overall Totals -->
       <div class="totals-grid">
 
         <div class="totals-card p-3">
@@ -120,7 +116,7 @@
 
         <div class="totals-card p-3">
           <div class="small text-muted">إجمالي مدفوعات تمارا وإمكان</div>
-          <div class="fs-5 fw-bold">{{ '%.2f'|format(overall.tamara_emkan) }}</div>
+          <div class="fs-5 fw-bold">{{ '%.2f'|format(overall.tamara) }}</div>
         </div>
 
         <div class="totals-card p-3">
@@ -160,7 +156,6 @@
 
       </div>
 
-      <!-- Desktop Table -->
       <div class="desktop-only">
         <div class="table-responsive mt-4">
           <table class="table table-bordered table-striped align-middle text-center">
@@ -186,9 +181,7 @@
             <tbody>
               {% if rows|length == 0 %}
               <tr>
-                <td colspan="14" class="text-center text-muted py-4">
-                  لا توجد بيانات ضمن هذه المدة
-                </td>
+                <td colspan="14" class="text-center text-muted py-4">لا توجد بيانات ضمن هذه المدة</td>
               </tr>
               {% endif %}
 
@@ -199,7 +192,7 @@
                 <td>{{ '%.2f'|format(r.cash_end or 0) }}</td>
                 <td>{{ '%.2f'|format(r.cash_diff or 0) }}</td>
                 <td>{{ '%.2f'|format(r.cash_received or 0) }}</td>
-                <td>{{ '%.2f'|format(r.tamara_emkan or 0) }}</td>
+                <td>{{ '%.2f'|format(r.tamara or 0) }}</td>
                 <td>{{ '%.2f'|format(r.mada or 0) }}</td>
                 <td>{{ '%.2f'|format(r.total_inputs or 0) }}</td>
                 <td>{{ '%.2f'|format(r.total_general or 0) }}</td>
@@ -223,7 +216,6 @@
         </div>
       </div>
 
-      <!-- Mobile Cards -->
       <div class="mobile-only mt-4">
         {% if rows|length == 0 %}
           <div class="text-center text-muted py-4">لا توجد بيانات ضمن هذه المدة</div>
@@ -241,60 +233,17 @@
             </div>
 
             <div class="mv-kv">
-              <div>
-                <div class="k">صندوق البداية</div>
-                <div class="v">{{ '%.2f'|format(r.cash_start or 0) }}</div>
-              </div>
-
-              <div>
-                <div class="k">صندوق النهاية</div>
-                <div class="v">{{ '%.2f'|format(r.cash_end or 0) }}</div>
-              </div>
-
-              <div>
-                <div class="k">فرق الصندوق</div>
-                <div class="v">{{ '%.2f'|format(r.cash_diff or 0) }}</div>
-              </div>
-
-              <div>
-                <div class="k">الكاش المستلم</div>
-                <div class="v">{{ '%.2f'|format(r.cash_received or 0) }}</div>
-              </div>
-
-              <div>
-                <div class="k">تمارا وإمكان</div>
-                <div class="v">{{ '%.2f'|format(r.tamara_emkan or 0) }}</div>
-              </div>
-
-              <div>
-                <div class="k">مدفوعات mada</div>
-                <div class="v">{{ '%.2f'|format(r.mada or 0) }}</div>
-              </div>
-
-              <div>
-                <div class="k">مشتريات نقدية</div>
-                <div class="v">{{ '%.2f'|format(r.total_inputs or 0) }}</div>
-              </div>
-
-              <div>
-                <div class="k">الآجلة وسدادها</div>
-                <div class="v">{{ '%.2f'|format(r.total_general or 0) }}</div>
-              </div>
-
-              <div>
-                <div class="k">مصروفات نثرية</div>
-                <div class="v">{{ '%.2f'|format(r.total_petty or 0) }}</div>
-              </div>
-
-              <div>
-                <div class="k">إجمالي إنجاز</div>
-                <div class="v">{{ '%.2f'|format(r.total_in_enjaz or 0) }}</div>
-              </div>
-
-              <div>
-                <div class="k">الإجمالي الكلي</div>
-                <div class="v">{{ '%.2f'|format(r.total_overall or 0) }}</div>
-              </div>
+              <div><div class="k">صندوق البداية</div><div class="v">{{ '%.2f'|format(r.cash_start or 0) }}</div></div>
+              <div><div class="k">صندوق النهاية</div><div class="v">{{ '%.2f'|format(r.cash_end or 0) }}</div></div>
+              <div><div class="k">فرق الصندوق</div><div class="v">{{ '%.2f'|format(r.cash_diff or 0) }}</div></div>
+              <div><div class="k">الكاش المستلم</div><div class="v">{{ '%.2f'|format(r.cash_received or 0) }}</div></div>
+              <div><div class="k">تمارا وإمكان</div><div class="v">{{ '%.2f'|format(r.tamara or 0) }}</div></div>
+              <div><div class="k">مدفوعات mada</div><div class="v">{{ '%.2f'|format(r.mada or 0) }}</div></div>
+              <div><div class="k">مشتريات نقدية</div><div class="v">{{ '%.2f'|format(r.total_inputs or 0) }}</div></div>
+              <div><div class="k">الآجلة وسدادها</div><div class="v">{{ '%.2f'|format(r.total_general or 0) }}</div></div>
+              <div><div class="k">مصروفات نثرية</div><div class="v">{{ '%.2f'|format(r.total_petty or 0) }}</div></div>
+              <div><div class="k">إجمالي إنجاز</div><div class="v">{{ '%.2f'|format(r.total_in_enjaz or 0) }}</div></div>
+              <div><div class="k">الإجمالي الكلي</div><div class="v">{{ '%.2f'|format(r.total_overall or 0) }}</div></div>
 
               <div style="grid-column: 1 / -1;">
                 <div class="k">الخطأ</div>

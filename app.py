@@ -732,7 +732,6 @@ def ensure_daily_accounting_schema(db):
           cash_start REAL NOT NULL DEFAULT 0,
           cash_end REAL NOT NULL DEFAULT 0,
           cash_received REAL NOT NULL DEFAULT 0,
-          tamara_emkan REAL NOT NULL DEFAULT 0,
           mada REAL NOT NULL DEFAULT 0,
           total_in_enjaz REAL NOT NULL DEFAULT 0,
           notes TEXT,
@@ -753,10 +752,21 @@ def ensure_daily_accounting_schema(db):
     """)
 
     db.execute("""
+        CREATE TABLE IF NOT EXISTS daily_tamara_emkan (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          header_id INTEGER NOT NULL,
+          pay_type TEXT NOT NULL,
+          amount REAL NOT NULL DEFAULT 0,
+          FOREIGN KEY(header_id) REFERENCES daily_header(id) ON DELETE CASCADE
+        )
+    """)
+
+    db.execute("""
         CREATE TABLE IF NOT EXISTS daily_expenses_general (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           header_id INTEGER NOT NULL,
           expense_type TEXT NOT NULL,
+          payment_kind TEXT NOT NULL DEFAULT 'debt',
           amount REAL NOT NULL DEFAULT 0,
           FOREIGN KEY(header_id) REFERENCES daily_header(id) ON DELETE CASCADE
         )
@@ -781,15 +791,14 @@ def ensure_daily_accounting_schema(db):
 
     if "total_in_enjaz" not in cols:
         db.execute("ALTER TABLE daily_header ADD COLUMN total_in_enjaz REAL NOT NULL DEFAULT 0")
-
     if "mada" not in cols:
         db.execute("ALTER TABLE daily_header ADD COLUMN mada REAL NOT NULL DEFAULT 0")
-
     if "cash_received" not in cols:
         db.execute("ALTER TABLE daily_header ADD COLUMN cash_received REAL NOT NULL DEFAULT 0")
 
-    if "tamara_emkan" not in cols:
-        db.execute("ALTER TABLE daily_header ADD COLUMN tamara_emkan REAL NOT NULL DEFAULT 0")
+    gen_cols = [r[1] for r in db.execute("PRAGMA table_info(daily_expenses_general)").fetchall()]
+    if "payment_kind" not in gen_cols:
+        db.execute("ALTER TABLE daily_expenses_general ADD COLUMN payment_kind TEXT NOT NULL DEFAULT 'debt'")
 
     db.commit()
 
@@ -858,7 +867,6 @@ def accounting_daily(kind):
         cash_start = _to_float(request.form.get("cash_start"), 0)
         cash_end = _to_float(request.form.get("cash_end"), 0)
         cash_received = _to_float(request.form.get("cash_received"), 0)
-        tamara_emkan = _to_float(request.form.get("tamara_emkan"), 0)
         mada = _to_float(request.form.get("mada"), 0)
         total_in_enjaz = _to_float(request.form.get("total_in_enjaz"), 0)
         notes = (request.form.get("notes") or "").strip() or None
@@ -880,7 +888,6 @@ def accounting_daily(kind):
             SET cash_start=?,
                 cash_end=?,
                 cash_received=?,
-                tamara_emkan=?,
                 mada=?,
                 total_in_enjaz=?,
                 notes=?,
@@ -890,7 +897,6 @@ def accounting_daily(kind):
             cash_start,
             cash_end,
             cash_received,
-            tamara_emkan,
             mada,
             total_in_enjaz,
             notes,
@@ -898,6 +904,7 @@ def accounting_daily(kind):
         ))
 
         db.execute("DELETE FROM daily_inputs WHERE header_id=?", (header_id,))
+        db.execute("DELETE FROM daily_tamara_emkan WHERE header_id=?", (header_id,))
         db.execute("DELETE FROM daily_expenses_general WHERE header_id=?", (header_id,))
         db.execute("DELETE FROM daily_expenses_petty WHERE header_id=?", (header_id,))
 
@@ -914,17 +921,46 @@ def accounting_daily(kind):
                     (header_id, t, amt),
                 )
 
-        gen_types = request.form.getlist("gen_type")
-        gen_amounts = request.form.getlist("gen_amount")
-        for t, a in zip(gen_types, gen_amounts):
+        tamara_types = request.form.getlist("tamara_type")
+        tamara_amounts = request.form.getlist("tamara_amount")
+        for t, a in zip(tamara_types, tamara_amounts):
             t = (t or "").strip()
             amt = _to_float(a, 0)
             if t or amt:
                 if not t:
                     t = "(بدون عنوان)"
                 db.execute(
-                    "INSERT INTO daily_expenses_general (header_id, expense_type, amount) VALUES (?, ?, ?)",
+                    "INSERT INTO daily_tamara_emkan (header_id, pay_type, amount) VALUES (?, ?, ?)",
                     (header_id, t, amt),
+                )
+
+        gen_types = request.form.getlist("gen_type")
+        gen_kinds = request.form.getlist("gen_kind")
+        gen_amounts = request.form.getlist("gen_amount")
+
+        for t, k, a in zip(gen_types, gen_kinds, gen_amounts):
+            t = (t or "").strip()
+            k = (k or "debt").strip()
+            amt = _to_float(a, 0)
+
+            if k not in ("debt", "payment"):
+                k = "debt"
+
+            if k == "payment":
+                amt = -abs(amt)
+            else:
+                amt = abs(amt)
+
+            if t or amt:
+                if not t:
+                    t = "(بدون عنوان)"
+                db.execute(
+                    """
+                    INSERT INTO daily_expenses_general
+                    (header_id, expense_type, payment_kind, amount)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (header_id, t, k, amt),
                 )
 
         petty_types = request.form.getlist("petty_type")
@@ -951,6 +987,7 @@ def accounting_daily(kind):
 
     header_id = header["id"] if header else None
     inputs = []
+    tamara = []
     gen = []
     petty = []
 
@@ -960,8 +997,13 @@ def accounting_daily(kind):
             (header_id,),
         ).fetchall()
 
+        tamara = db.execute(
+            "SELECT pay_type, amount FROM daily_tamara_emkan WHERE header_id=? ORDER BY id",
+            (header_id,),
+        ).fetchall()
+
         gen = db.execute(
-            "SELECT expense_type, amount FROM daily_expenses_general WHERE header_id=? ORDER BY id",
+            "SELECT expense_type, payment_kind, amount FROM daily_expenses_general WHERE header_id=? ORDER BY id",
             (header_id,),
         ).fetchall()
 
@@ -975,6 +1017,7 @@ def accounting_daily(kind):
 
     totals = {
         "inputs": _sum(inputs),
+        "tamara": _sum(tamara),
         "general": _sum(gen),
         "petty": _sum(petty),
     }
@@ -982,7 +1025,6 @@ def accounting_daily(kind):
     cash_start = _to_float(header["cash_start"], 0) if header else 0.0
     cash_end = _to_float(header["cash_end"], 0) if header else 0.0
     cash_received = _to_float(header["cash_received"], 0) if header else 0.0
-    tamara_emkan = _to_float(header["tamara_emkan"], 0) if header else 0.0
     mada = _to_float(header["mada"], 0) if header else 0.0
     total_in_enjaz = _to_float(header["total_in_enjaz"], 0) if header else 0.0
 
@@ -990,20 +1032,18 @@ def accounting_daily(kind):
     totals["cash_end"] = cash_end
     totals["cash_diff"] = cash_end - cash_start
     totals["cash_received"] = cash_received
-    totals["tamara_emkan"] = tamara_emkan
     totals["mada"] = mada
     totals["total_in_enjaz"] = total_in_enjaz
 
     totals["total_overall"] = (
         cash_end
+        + cash_received
+        + totals["tamara"]
         + mada
         + totals["inputs"]
         + totals["general"]
         + totals["petty"]
-    ) - (
-        cash_start
-       + cash_received
-    )
+    ) - cash_start
 
     totals["error"] = totals["total_overall"] - total_in_enjaz
 
@@ -1013,6 +1053,7 @@ def accounting_daily(kind):
         day_date=day_date,
         header=header,
         inputs=inputs,
+        tamara=tamara,
         gen=gen,
         petty=petty,
         totals=totals,
@@ -1038,7 +1079,6 @@ def accounting_movements(kind):
                cash_start,
                cash_end,
                cash_received,
-               tamara_emkan,
                mada,
                total_in_enjaz
           FROM daily_header
@@ -1050,13 +1090,13 @@ def accounting_movements(kind):
     rows = []
 
     overall_inputs = 0.0
+    overall_tamara = 0.0
     overall_general = 0.0
     overall_petty = 0.0
     overall_cash_start = 0.0
     overall_cash_end = 0.0
     overall_cash_diff = 0.0
     overall_cash_received = 0.0
-    overall_tamara_emkan = 0.0
     overall_mada = 0.0
     overall_total_in_enjaz = 0.0
 
@@ -1065,6 +1105,11 @@ def accounting_movements(kind):
 
         total_inputs = _to_float(db.execute(
             "SELECT COALESCE(SUM(amount),0) AS s FROM daily_inputs WHERE header_id=?",
+            (hid,)
+        ).fetchone()["s"], 0)
+
+        total_tamara = _to_float(db.execute(
+            "SELECT COALESCE(SUM(amount),0) AS s FROM daily_tamara_emkan WHERE header_id=?",
             (hid,)
         ).fetchone()["s"], 0)
 
@@ -1082,20 +1127,18 @@ def accounting_movements(kind):
         cash_end = _to_float(h["cash_end"], 0)
         cash_diff = cash_end - cash_start
         cash_received = _to_float(h["cash_received"], 0)
-        tamara_emkan = _to_float(h["tamara_emkan"], 0)
         mada = _to_float(h["mada"], 0)
         total_in_enjaz = _to_float(h["total_in_enjaz"], 0)
 
         total_overall = (
             cash_end
+            + cash_received
+            + total_tamara
             + mada
             + total_inputs
             + total_general
             + total_petty
-        ) - (
-            cash_start
-       + cash_received
-        )
+        ) - cash_start
 
         err_val = total_overall - total_in_enjaz
 
@@ -1105,7 +1148,7 @@ def accounting_movements(kind):
             "cash_end": cash_end,
             "cash_diff": cash_diff,
             "cash_received": cash_received,
-            "tamara_emkan": tamara_emkan,
+            "tamara": total_tamara,
             "mada": mada,
             "total_inputs": total_inputs,
             "total_general": total_general,
@@ -1116,38 +1159,37 @@ def accounting_movements(kind):
         })
 
         overall_inputs += total_inputs
+        overall_tamara += total_tamara
         overall_general += total_general
         overall_petty += total_petty
         overall_cash_start += cash_start
         overall_cash_end += cash_end
         overall_cash_diff += cash_diff
         overall_cash_received += cash_received
-        overall_tamara_emkan += tamara_emkan
         overall_mada += mada
         overall_total_in_enjaz += total_in_enjaz
 
     overall_total_overall = (
         overall_cash_end
+        + overall_cash_received
+        + overall_tamara
         + overall_mada
         + overall_inputs
         + overall_general
         + overall_petty
-    ) - (
-        overall_cash_start
-        + overall_cash_received
-    )
+    ) - overall_cash_start
 
     overall_error = overall_total_overall - overall_total_in_enjaz
 
     overall = {
         "inputs": overall_inputs,
+        "tamara": overall_tamara,
         "general": overall_general,
         "petty": overall_petty,
         "cash_start": overall_cash_start,
         "cash_end": overall_cash_end,
         "cash_diff": overall_cash_diff,
         "cash_received": overall_cash_received,
-        "tamara_emkan": overall_tamara_emkan,
         "mada": overall_mada,
         "total_in_enjaz": overall_total_in_enjaz,
         "total_overall": overall_total_overall,
