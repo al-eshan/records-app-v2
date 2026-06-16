@@ -2557,17 +2557,21 @@ def employee_delete(eid: int):
         db.commit()
     except Exception as e:
         db.rollback()
-        print("employee_delete error:", e)
-        flash("تعذر حذف الموظف (راجع السجلات).", "danger")
+        print("employee_delete db error:", e)
+        flash("تعذر حذف الموظف من قاعدة البيانات", "danger")
         return redirect(url_for("employees_list"))
 
-    ws, err = open_ws("employees")
-    if not err:
-        ws_delete_by_id(ws, eid)
+    try:
+        ws, err = open_ws("employees")
+        if not err:
+            ws_delete_by_id(ws, eid)
+    except Exception as e:
+        print("employee_delete google sheets error:", e)
+        flash("تم حذف الموظف، لكن فشل حذف السطر من Google Sheets", "warning")
+        return redirect(url_for("employees_list"))
 
     flash("تم حذف الموظف", "info")
-    return redirect(url_for("employees_list"))
-# =========================
+    return redirect(url_for("employees_list"))# =========================
 # Tasks
 # =========================
 @app.route("/tasks", methods=["GET", "POST"])
