@@ -904,33 +904,22 @@ def accounting_daily(kind):
         ))
 
         db.execute("DELETE FROM daily_inputs WHERE header_id=?", (header_id,))
-        db.execute("DELETE FROM daily_tamara_emkan WHERE header_id=?", (header_id,))
         db.execute("DELETE FROM daily_expenses_general WHERE header_id=?", (header_id,))
         db.execute("DELETE FROM daily_expenses_petty WHERE header_id=?", (header_id,))
 
         input_types = request.form.getlist("input_type")
         input_amounts = request.form.getlist("input_amount")
+
         for t, a in zip(input_types, input_amounts):
             t = (t or "").strip()
             amt = _to_float(a, 0)
+
             if t or amt:
                 if not t:
                     t = "(بدون عنوان)"
+
                 db.execute(
                     "INSERT INTO daily_inputs (header_id, input_type, amount) VALUES (?, ?, ?)",
-                    (header_id, t, amt),
-                )
-
-        tamara_types = request.form.getlist("tamara_type")
-        tamara_amounts = request.form.getlist("tamara_amount")
-        for t, a in zip(tamara_types, tamara_amounts):
-            t = (t or "").strip()
-            amt = _to_float(a, 0)
-            if t or amt:
-                if not t:
-                    t = "(بدون عنوان)"
-                db.execute(
-                    "INSERT INTO daily_tamara_emkan (header_id, pay_type, amount) VALUES (?, ?, ?)",
                     (header_id, t, amt),
                 )
 
@@ -943,7 +932,7 @@ def accounting_daily(kind):
             k = (k or "debt").strip()
             amt = _to_float(a, 0)
 
-            if k not in ("debt", "payment"):
+            if k not in ("debt", "payment", "tamara", "emkan"):
                 k = "debt"
 
             if k == "payment":
@@ -954,23 +943,29 @@ def accounting_daily(kind):
             if t or amt:
                 if not t:
                     t = "(بدون عنوان)"
-                db.execute(
-                    """
+
+                db.execute("""
                     INSERT INTO daily_expenses_general
                     (header_id, expense_type, payment_kind, amount)
                     VALUES (?, ?, ?, ?)
-                    """,
-                    (header_id, t, k, amt),
-                )
+                """, (
+                    header_id,
+                    t,
+                    k,
+                    amt
+                ))
 
         petty_types = request.form.getlist("petty_type")
         petty_amounts = request.form.getlist("petty_amount")
+
         for t, a in zip(petty_types, petty_amounts):
             t = (t or "").strip()
             amt = _to_float(a, 0)
+
             if t or amt:
                 if not t:
                     t = "(بدون عنوان)"
+
                 db.execute(
                     "INSERT INTO daily_expenses_petty (header_id, expense_type, amount) VALUES (?, ?, ?)",
                     (header_id, t, amt),
@@ -987,18 +982,12 @@ def accounting_daily(kind):
 
     header_id = header["id"] if header else None
     inputs = []
-    tamara = []
     gen = []
     petty = []
 
     if header_id:
         inputs = db.execute(
             "SELECT input_type, amount FROM daily_inputs WHERE header_id=? ORDER BY id",
-            (header_id,),
-        ).fetchall()
-
-        tamara = db.execute(
-            "SELECT pay_type, amount FROM daily_tamara_emkan WHERE header_id=? ORDER BY id",
             (header_id,),
         ).fetchall()
 
@@ -1015,10 +1004,17 @@ def accounting_daily(kind):
     def _sum(rows):
         return float(sum([_to_float(r["amount"], 0) for r in rows]))
 
+    def _sum_by_kind(rows, kinds):
+        return float(sum([
+            _to_float(r["amount"], 0)
+            for r in rows
+            if r["payment_kind"] in kinds
+        ]))
+
     totals = {
         "inputs": _sum(inputs),
-        "tamara": _sum(tamara),
-        "general": _sum(gen),
+        "tamara": _sum_by_kind(gen, ("tamara", "emkan")),
+        "general": _sum_by_kind(gen, ("debt", "payment")),
         "petty": _sum(petty),
     }
 
@@ -1053,7 +1049,6 @@ def accounting_daily(kind):
         day_date=day_date,
         header=header,
         inputs=inputs,
-        tamara=tamara,
         gen=gen,
         petty=petty,
         totals=totals,
@@ -2420,11 +2415,26 @@ def employee_edit(eid: int):
     db = get_db()
     ensure_employees_schema(db)
 
-    row = db.execute("SELECT * FROM employees WHERE id=?", (eid,)).fetchone()
+    row_db = db.execute("SELECT * FROM employees WHERE id=?", (eid,)).fetchone()
 
-    if row is None:
+    if row_db is None:
         flash("الموظف غير موجود", "danger")
         return redirect(url_for("employees_list"))
+
+    row = dict(row_db)
+
+    for k in [
+        "name_ar", "name_en", "nationality", "mobile",
+        "passport_no", "passport_expiry",
+        "iqama_no", "iqama_expiry",
+        "insurance_name", "insurance_expiry",
+        "bank_account"
+    ]:
+        row[k] = row.get(k) or ""
+
+    row["basic_salary"] = row.get("basic_salary") or 0
+    row["commission"] = row.get("commission") or 0
+    row["debts"] = row.get("debts") or 0
 
     if request.method == "POST":
         payload = {
@@ -2485,44 +2495,49 @@ def employee_edit(eid: int):
 
         db.commit()
 
-        ws, err = open_ws("employees")
-        if not err:
-            headers = [
-                "id", "name_ar", "name_en", "nationality", "mobile",
-                "passport_no", "passport_expiry",
-                "iqama_no", "iqama_expiry",
-                "insurance_name", "insurance_expiry",
-                "basic_salary", "commission", "bank_account", "debts"
-            ]
+        try:
+            ws, err = open_ws("employees")
 
-            ws_ensure_headers(ws, headers)
+            if not err:
+                headers = [
+                    "id", "name_ar", "name_en", "nationality", "mobile",
+                    "passport_no", "passport_expiry",
+                    "iqama_no", "iqama_expiry",
+                    "insurance_name", "insurance_expiry",
+                    "basic_salary", "commission", "bank_account", "debts"
+                ]
 
-            ok = ws_upsert(ws, headers, [
-                eid,
-                payload["name_ar"],
-                payload["name_en"],
-                payload["nationality"],
-                payload["mobile"],
-                payload["passport_no"],
-                payload["passport_expiry"] or "",
-                payload["iqama_no"],
-                payload["iqama_expiry"] or "",
-                payload["insurance_name"],
-                payload["insurance_expiry"] or "",
-                payload["basic_salary"] or "",
-                payload["commission"] or "",
-                payload["bank_account"],
-                payload["debts"],
-            ], eid)
+                ws_ensure_headers(ws, headers)
 
-            if not ok:
-                flash("⚠️ فشل تصدير Google Sheets (employees/edit) راجع logs", "warning")
+                ok = ws_upsert(ws, headers, [
+                    eid,
+                    payload["name_ar"],
+                    payload["name_en"],
+                    payload["nationality"],
+                    payload["mobile"],
+                    payload["passport_no"],
+                    payload["passport_expiry"] or "",
+                    payload["iqama_no"],
+                    payload["iqama_expiry"] or "",
+                    payload["insurance_name"],
+                    payload["insurance_expiry"] or "",
+                    payload["basic_salary"] or "",
+                    payload["commission"] or "",
+                    payload["bank_account"],
+                    payload["debts"],
+                ], eid)
+
+                if not ok:
+                    flash("⚠️ تم حفظ التعديل، لكن فشل تصدير Google Sheets", "warning")
+
+        except Exception as e:
+            print("employees/edit google sheets error:", e)
+            flash("⚠️ تم حفظ التعديل، لكن فشل تصدير Google Sheets", "warning")
 
         flash("تم تعديل بيانات الموظف", "success")
         return redirect(url_for("employee_detail", eid=eid))
 
     return render_template("employee_form.html", mode="edit", row=row)
-
 
 @app.route("/employees/<int:eid>/delete", methods=["POST"])
 @login_required
