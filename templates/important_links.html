@@ -1,81 +1,210 @@
 {% extends "base.html" %}
 {% block content %}
 
-<div class="page-tiles">
+<div class="page-tiles" style="max-width: 1150px;">
 
-  <div class="page-titlebar">
-    <h3>روابط مهمة</h3>
-    <span class="text-muted">الوصول السريع للأنظمة والخدمات</span>
+  <div class="tile-card">
+    <div class="w-100">
+
+      <div class="page-titlebar d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+          <h3 class="m-0">روابط مهمة</h3>
+          <span class="text-muted">
+            الوصول السريع للأنظمة والخدمات - عدد الروابط: {{ total_count }}
+          </span>
+        </div>
+      </div>
+
+      <form method="post" class="row g-3 align-items-end mb-4">
+
+        {% if edit_row %}
+          <input type="hidden" name="action" value="update">
+          <input type="hidden" name="id" value="{{ edit_row.id }}">
+        {% else %}
+          <input type="hidden" name="action" value="add">
+        {% endif %}
+
+        <div class="col-12 col-md-4">
+          <label class="form-label">وصف الموقع</label>
+          <input type="text"
+                 name="title"
+                 class="form-control"
+                 placeholder="مثال: منصة قوى"
+                 value="{{ edit_row.title if edit_row else '' }}"
+                 required>
+        </div>
+
+        <div class="col-12 col-md-4">
+          <label class="form-label">الرابط</label>
+          <input type="text"
+                 name="url"
+                 class="form-control"
+                 placeholder="https://example.com"
+                 value="{{ edit_row.url if edit_row else '' }}"
+                 required>
+        </div>
+
+        <div class="col-12 col-md-2">
+          <label class="form-label">التصنيف</label>
+          <input type="text"
+                 name="category"
+                 class="form-control"
+                 placeholder="حكومي / بنك / تمويل"
+                 value="{{ edit_row.category if edit_row else '' }}">
+        </div>
+
+        <div class="col-12 col-md-2 d-grid">
+          <button type="submit" class="btn btn-primary">
+            {{ "حفظ التعديل" if edit_row else "إضافة" }}
+          </button>
+        </div>
+
+        {% if edit_row %}
+        <div class="col-12">
+          <a href="{{ url_for('important_links') }}" class="btn btn-secondary btn-sm">
+            إلغاء التعديل
+          </a>
+        </div>
+        {% endif %}
+
+      </form>
+
+      <form method="get" class="row g-2 align-items-end mb-3">
+
+        <div class="col-12 col-md-6">
+          <label class="form-label">بحث</label>
+          <input type="text"
+                 name="q"
+                 class="form-control"
+                 placeholder="ابحث بوصف الموقع"
+                 value="{{ q or '' }}">
+        </div>
+
+        <div class="col-12 col-md-4">
+          <label class="form-label">التصنيف</label>
+          <select name="category" class="form-select">
+            <option value="">الكل</option>
+            {% for c in categories %}
+              <option value="{{ c.category }}"
+                {% if category_filter == c.category %}selected{% endif %}>
+                {{ c.category }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-6 col-md-1 d-grid">
+          <button type="submit" class="btn btn-success">بحث</button>
+        </div>
+
+        <div class="col-6 col-md-1 d-grid">
+          <a href="{{ url_for('important_links') }}" class="btn btn-secondary">مسح</a>
+        </div>
+
+      </form>
+
+      <div class="table-wrap table-responsive">
+        <table class="table table-bordered table-striped align-middle text-center">
+          <thead>
+            <tr>
+              <th style="width:70px;">تثبيت</th>
+              <th>وصف الموقع</th>
+              <th style="width:160px;">التصنيف</th>
+              <th style="width:230px;">ترتيب</th>
+              <th style="width:260px;">الإجراءات</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {% if rows|length == 0 %}
+            <tr>
+              <td colspan="5" class="text-center text-muted py-4">
+                لا توجد روابط
+              </td>
+            </tr>
+            {% endif %}
+
+            {% for r in rows %}
+            <tr>
+              <td>
+                <form method="post" class="m-0">
+                  <input type="hidden" name="action" value="toggle_pin">
+                  <input type="hidden" name="id" value="{{ r.id }}">
+                  <button type="submit"
+                          class="btn btn-sm {% if r.is_pinned %}btn-warning{% else %}btn-outline-warning{% endif %}"
+                          title="{{ 'إلغاء التثبيت' if r.is_pinned else 'تثبيت' }}">
+                    {% if r.is_pinned %}📌{% else %}☆{% endif %}
+                  </button>
+                </form>
+              </td>
+
+              <td class="fw-semibold text-center">
+  {{ r.title }}
+</td>
+                {{ r.title }}
+              </td>
+
+              <td>
+                {{ r.category or "-" }}
+              </td>
+
+              <td>
+                <div class="d-flex justify-content-center gap-2 flex-wrap">
+                  <form method="post" class="m-0">
+                    <input type="hidden" name="action" value="move_up">
+                    <input type="hidden" name="id" value="{{ r.id }}">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">
+                      ↑ أعلى
+                    </button>
+                  </form>
+
+                  <form method="post" class="m-0">
+                    <input type="hidden" name="action" value="move_down">
+                    <input type="hidden" name="id" value="{{ r.id }}">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">
+                      ↓ أسفل
+                    </button>
+                  </form>
+                </div>
+              </td>
+
+         <td>
+  <div class="d-grid gap-2">
+
+    <a href="{{ r.url }}"
+       target="_blank"
+       rel="noopener noreferrer"
+       class="btn btn-sm btn-success w-100">
+      فتح
+    </a>
+
+    <div class="d-flex justify-content-center gap-2">
+      <a href="{{ url_for('important_links', edit_id=r.id) }}"
+         class="btn btn-sm btn-warning flex-fill">
+        تعديل
+      </a>
+
+      <form method="post"
+            onsubmit="return confirm('هل أنت متأكد من حذف هذا الرابط؟');"
+            class="m-0 flex-fill">
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="id" value="{{ r.id }}">
+        <button type="submit" class="btn btn-sm btn-danger w-100">
+          حذف
+        </button>
+      </form>
+    </div>
+
   </div>
+</td>
+            </tr>
+            {% endfor %}
+          </tbody>
 
-  <div class="tiles-grid">
+        </table>
+      </div>
 
-    <a href="http://mp2.njazsoft.com/el_ashan/mscache/login/"
-       target="_blank"
-       class="tile-card tile-center">
-      <div class="tile-title">إنجاز سوفت</div>
-    </a>
-
-    <a href="https://mpq.njazsoft.com/company_stockquantity//"
-       target="_blank"
-       class="tile-card tile-center">
-      <div class="tile-title">مشاركة قطع</div>
-    </a>
-
-    <a href="https://partsouq.com/"
-       target="_blank"
-       class="tile-card tile-center">
-      <div class="tile-title">كاتلوج partsouq</div>
-    </a>
-
-    <a href="https://partners.tamara.co/#/login?locale=ar_SA"
-       target="_blank"
-       class="tile-card tile-center">
-      <div class="tile-title">تمارا</div>
-    </a>
-
-    <a href="https://merchants.emkanfinance.com.sa/login"
-       target="_blank"
-       class="tile-card tile-center">
-      <div class="tile-title">إمكان</div>
-    </a>
-
-    <a href="https://partstore.toyota.com.sa/ar/login"
-       target="_blank"
-       class="tile-card tile-center">
-      <div class="tile-title">عبداللطيف جميل</div>
-    </a>
-
-    <a href="https://business.sa"
-       target="_blank"
-       class="tile-card tile-center">
-      <div class="tile-title">المركز السعودي للأعمال</div>
-    </a>
-
-    <a href="https://absher.sa"
-       target="_blank"
-       class="tile-card tile-center">
-      <div class="tile-title">أبشر</div>
-    </a>
-
-    <a href="https://qiwa.sa"
-       target="_blank"
-       class="tile-card tile-center">
-      <div class="tile-title">قوى</div>
-    </a>
-
-    <a href="https://my.gov.sa"
-       target="_blank"
-       class="tile-card tile-center">
-      <div class="tile-title">نفاذ الوطني</div>
-    </a>
-
-    <a href="https://www.alrajhibank.com.sa"
-       target="_blank"
-       class="tile-card tile-center">
-      <div class="tile-title">الراجحي أعمال</div>
-    </a>
-
+    </div>
   </div>
 
 </div>

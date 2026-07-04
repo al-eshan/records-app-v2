@@ -142,7 +142,6 @@ def ensure_db_schema_once():
 
     app.config["DB_BOOTSTRAPPED"] = True
 
-
 def ensure_financial_commitments_schema(db):
     """Ensure financial_commitments table exists and has task_id column."""
     db.execute("""
@@ -157,6 +156,7 @@ def ensure_financial_commitments_schema(db):
     """)
 
     cols = [r[1] for r in db.execute("PRAGMA table_info(financial_commitments)").fetchall()]
+
     if "task_id" not in cols:
         db.execute("ALTER TABLE financial_commitments ADD COLUMN task_id INTEGER")
 
@@ -185,9 +185,6 @@ def ensure_debts_ledger_schema(db):
 
     if "last_sent_at" not in cols:
         db.execute("ALTER TABLE debts_ledger ADD COLUMN last_sent_at TEXT")
-
-    db.commit()
-
     if "es" not in cols:
         db.execute("ALTER TABLE debts_ledger ADD COLUMN es TEXT NOT NULL DEFAULT 'ES1'")
     if "invoice_date" not in cols:
@@ -209,6 +206,35 @@ def ensure_debts_ledger_schema(db):
     if "updated_at" not in cols:
         db.execute("ALTER TABLE debts_ledger ADD COLUMN updated_at TEXT")
 
+    db.commit()
+
+
+def ensure_important_links_schema(db):
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS important_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        url TEXT NOT NULL,
+        category TEXT DEFAULT '',
+        is_pinned INTEGER NOT NULL DEFAULT 0,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT
+    )
+    """)
+
+    cols = [r[1] for r in db.execute("PRAGMA table_info(important_links)").fetchall()]
+
+    if "category" not in cols:
+        db.execute("ALTER TABLE important_links ADD COLUMN category TEXT DEFAULT ''")
+    if "is_pinned" not in cols:
+        db.execute("ALTER TABLE important_links ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0")
+    if "sort_order" not in cols:
+        db.execute("ALTER TABLE important_links ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+    if "created_at" not in cols:
+        db.execute("ALTER TABLE important_links ADD COLUMN created_at TEXT")
+    if "updated_at" not in cols:
+        db.execute("ALTER TABLE important_links ADD COLUMN updated_at TEXT")
 
     db.commit()
 
@@ -241,6 +267,7 @@ def ensure_master_user():
             """,
             (uid, k),
         )
+
     db.commit()
 
 
@@ -249,9 +276,13 @@ def _ensure_bootstrap():
     try:
         ensure_db_schema_once()
         db = get_db()
+
         ensure_financial_commitments_schema(db)
         ensure_debts_ledger_schema(db)
+        ensure_important_links_schema(db)
+
         ensure_master_user()
+
     except Exception as e:
         print("bootstrap error:", e)
         pass
@@ -1826,10 +1857,156 @@ def suggestions_page():
         is_admin=is_admin
     )
 
-@app.route("/important-links")
+def normalize_url(url):
+    url = (url or "").strip()
+    if url and not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    return url
+
+
+@app.route("/important-links", methods=["GET", "POST"])
 @login_required
 def important_links():
-    return render_template("important_links.html")
+    db = get_db()
+    ensure_important_links_schema(db)
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip()
+        link_id = (request.form.get("id") or "").strip()
+        title = (request.form.get("title") or "").strip()
+        url = normalize_url(request.form.get("url"))
+        category = (request.form.get("category") or "").strip()
+
+        if action in ("add", "update"):
+            if not title:
+                flash("وصف الموقع مطلوب", "warning")
+                return redirect(url_for("important_links"))
+            if not url:
+                flash("الرابط مطلوب", "warning")
+                return redirect(url_for("important_links"))
+
+        if action == "add":
+            max_order = db.execute(
+                "SELECT COALESCE(MAX(sort_order), 0) AS m FROM important_links"
+            ).fetchone()["m"]
+
+            db.execute("""
+                INSERT INTO important_links
+                (title, url, category, sort_order, created_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+            """, (title, url, category, max_order + 1))
+            db.commit()
+            flash("تمت إضافة الرابط", "success")
+
+        elif action == "update" and link_id:
+            db.execute("""
+                UPDATE important_links
+                SET title=?, url=?, category=?, updated_at=datetime('now')
+                WHERE id=?
+            """, (title, url, category, link_id))
+            db.commit()
+            flash("تم تعديل الرابط", "success")
+
+        elif action == "delete" and link_id:
+            db.execute("DELETE FROM important_links WHERE id=?", (link_id,))
+            db.commit()
+            flash("تم حذف الرابط", "warning")
+
+        elif action == "toggle_pin" and link_id:
+            row = db.execute(
+                "SELECT is_pinned FROM important_links WHERE id=?",
+                (link_id,)
+            ).fetchone()
+            if row:
+                new_val = 0 if row["is_pinned"] else 1
+                db.execute(
+                    "UPDATE important_links SET is_pinned=?, updated_at=datetime('now') WHERE id=?",
+                    (new_val, link_id)
+                )
+                db.commit()
+
+        elif action in ("move_up", "move_down") and link_id:
+            row = db.execute(
+                "SELECT id, sort_order FROM important_links WHERE id=?",
+                (link_id,)
+            ).fetchone()
+
+            if row:
+                if action == "move_up":
+                    other = db.execute("""
+                        SELECT id, sort_order
+                        FROM important_links
+                        WHERE sort_order < ?
+                        ORDER BY sort_order DESC
+                        LIMIT 1
+                    """, (row["sort_order"],)).fetchone()
+                else:
+                    other = db.execute("""
+                        SELECT id, sort_order
+                        FROM important_links
+                        WHERE sort_order > ?
+                        ORDER BY sort_order ASC
+                        LIMIT 1
+                    """, (row["sort_order"],)).fetchone()
+
+                if other:
+                    db.execute("UPDATE important_links SET sort_order=? WHERE id=?",
+                               (other["sort_order"], row["id"]))
+                    db.execute("UPDATE important_links SET sort_order=? WHERE id=?",
+                               (row["sort_order"], other["id"]))
+                    db.commit()
+
+        return redirect(url_for("important_links"))
+
+    q = (request.args.get("q") or "").strip()
+    category_filter = (request.args.get("category") or "").strip()
+    edit_id = (request.args.get("edit_id") or "").strip()
+
+    where = []
+    params = []
+
+    if q:
+        where.append("title LIKE ?")
+        params.append(f"%{q}%")
+
+    if category_filter:
+        where.append("category = ?")
+        params.append(category_filter)
+
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+
+    rows = db.execute(f"""
+        SELECT *
+        FROM important_links
+        {where_sql}
+        ORDER BY is_pinned DESC, sort_order ASC, id DESC
+    """, params).fetchall()
+
+    edit_row = None
+    if edit_id:
+        edit_row = db.execute(
+            "SELECT * FROM important_links WHERE id=?",
+            (edit_id,)
+        ).fetchone()
+
+    categories = db.execute("""
+        SELECT DISTINCT category
+        FROM important_links
+        WHERE category IS NOT NULL AND category != ''
+        ORDER BY category ASC
+    """).fetchall()
+
+    total_count = db.execute("SELECT COUNT(*) AS c FROM important_links").fetchone()["c"]
+
+    return render_template(
+        "important_links.html",
+        rows=rows,
+        edit_row=edit_row,
+        categories=categories,
+        total_count=total_count,
+        q=q,
+        category_filter=category_filter
+    )
 
 # =========================
 # Monthly Commission
