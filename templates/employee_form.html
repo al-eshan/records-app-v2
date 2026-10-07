@@ -77,6 +77,23 @@
                    value="{{ row.insurance_expiry if row else '' }}">
           </div>
 
+          <!-- العقد -->
+          <div class="col-12 col-md-4">
+            <label class="form-label">رقم العقد</label>
+            <input type="text"
+                   name="contract_no"
+                   class="form-control"
+                   value="{{ row.contract_no if row else '' }}">
+          </div>
+
+          <div class="col-12 col-md-4">
+            <label class="form-label">تاريخ انتهاء العقد</label>
+            <input type="date"
+                   name="contract_expiry"
+                   class="form-control"
+                   value="{{ row.contract_expiry if row else '' }}">
+          </div>
+
           <!-- الراتب الأساسي -->
           <div class="col-12 col-md-4">
             <label class="form-label">الراتب الأساسي</label>

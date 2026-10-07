@@ -125,6 +125,11 @@
         </div>
 
         <div class="totals-card p-3">
+          <div class="small text-muted">إجمالي الحوالات البنكية</div>
+          <div class="fs-5 fw-bold">{{ '%.2f'|format(overall.bank_transfers) }}</div>
+        </div>
+
+        <div class="totals-card p-3">
           <div class="small text-muted">إجمالي المشتريات النقدية</div>
           <div class="fs-5 fw-bold">{{ '%.2f'|format(overall.inputs) }}</div>
         </div>
@@ -168,6 +173,7 @@
                 <th>الكاش المستلم</th>
                 <th>مدفوعات تمارا وإمكان</th>
                 <th>مدفوعات الشبكة mada</th>
+                <th>الحوالات البنكية</th>
                 <th>مشتريات نقدية</th>
                 <th>المدفوعات الآجلة وسدادها</th>
                 <th>مصروفات نثرية</th>
@@ -181,7 +187,7 @@
             <tbody>
               {% if rows|length == 0 %}
               <tr>
-                <td colspan="14" class="text-center text-muted py-4">لا توجد بيانات ضمن هذه المدة</td>
+                <td colspan="15" class="text-center text-muted py-4">لا توجد بيانات ضمن هذه المدة</td>
               </tr>
               {% endif %}
 
@@ -194,6 +200,7 @@
                 <td>{{ '%.2f'|format(r.cash_received or 0) }}</td>
                 <td>{{ '%.2f'|format(r.tamara or 0) }}</td>
                 <td>{{ '%.2f'|format(r.mada or 0) }}</td>
+                <td>{{ '%.2f'|format(r.bank_transfers or 0) }}</td>
                 <td>{{ '%.2f'|format(r.total_inputs or 0) }}</td>
                 <td>{{ '%.2f'|format(r.total_general or 0) }}</td>
                 <td>{{ '%.2f'|format(r.total_petty or 0) }}</td>
@@ -239,6 +246,7 @@
               <div><div class="k">الكاش المستلم</div><div class="v">{{ '%.2f'|format(r.cash_received or 0) }}</div></div>
               <div><div class="k">تمارا وإمكان</div><div class="v">{{ '%.2f'|format(r.tamara or 0) }}</div></div>
               <div><div class="k">مدفوعات mada</div><div class="v">{{ '%.2f'|format(r.mada or 0) }}</div></div>
+              <div><div class="k">الحوالات البنكية</div><div class="v">{{ '%.2f'|format(r.bank_transfers or 0) }}</div></div>
               <div><div class="k">مشتريات نقدية</div><div class="v">{{ '%.2f'|format(r.total_inputs or 0) }}</div></div>
               <div><div class="k">الآجلة وسدادها</div><div class="v">{{ '%.2f'|format(r.total_general or 0) }}</div></div>
               <div><div class="k">مصروفات نثرية</div><div class="v">{{ '%.2f'|format(r.total_petty or 0) }}</div></div>

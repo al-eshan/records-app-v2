@@ -27,14 +27,17 @@
                 <th class="d-none d-md-table-cell">الجنسية</th>
                 <th class="d-none d-md-table-cell">الجوال</th>
 
-                <th class="d-none d-lg-table-cell">الراتب الأساسي</th>
-                <th class="d-none d-lg-table-cell">العمولة</th>
-                <th class="d-none d-lg-table-cell">إجمالي المرتب</th>
-                <th class="d-none d-lg-table-cell">المديونيات</th>
+                <th class="d-none d-lg-table-cell">رقم العقد</th>
+                <th>انتهاء العقد</th>
 
+                <th class="d-none d-lg-table-cell">رقم الجواز</th>
                 <th>انتهاء الجواز</th>
+
+                <th class="d-none d-lg-table-cell">رقم الإقامة</th>
                 <th>انتهاء الإقامة</th>
+
                 <th>انتهاء التأمين</th>
+
                 <th style="width: 220px;">إجراءات</th>
               </tr>
             </thead>
@@ -47,7 +50,6 @@
               {% endif %}
 
               {% for r in rows %}
-              {% set total_salary = (r.basic_salary|float) + (r.commission|float) %}
               <tr>
                 <td class="fw-semibold">{{ r.name_ar }}</td>
                 <td>{{ r.name_en or "-" }}</td>
@@ -55,17 +57,24 @@
                 <td class="d-none d-md-table-cell">{{ r.nationality or "-" }}</td>
                 <td class="d-none d-md-table-cell">{{ r.mobile or "-" }}</td>
 
-                <td class="d-none d-lg-table-cell">{{ '%.2f'|format(r.basic_salary|float) }}</td>
-                <td class="d-none d-lg-table-cell">{{ '%.2f'|format(r.commission|float) }}</td>
-                <td class="d-none d-lg-table-cell">{{ '%.2f'|format(total_salary) }}</td>
-                <td class="d-none d-lg-table-cell">{{ '%.2f'|format(r.debts|float) }}</td>
+                <td class="d-none d-lg-table-cell">{{ r.contract_no or "-" }}</td>
+
+                <td class="{{ status_color(r.contract_expiry) }}">
+                  {{ r.contract_expiry or "-" }}
+                </td>
+
+                <td class="d-none d-lg-table-cell">{{ r.passport_no or "-" }}</td>
 
                 <td class="{{ status_color(r.passport_expiry) }}">
                   {{ r.passport_expiry or "-" }}
                 </td>
+
+                <td class="d-none d-lg-table-cell">{{ r.iqama_no or "-" }}</td>
+
                 <td class="{{ status_color(r.iqama_expiry) }}">
                   {{ r.iqama_expiry or "-" }}
                 </td>
+
                 <td class="{{ status_color(r.insurance_expiry) }}">
                   {{ r.insurance_expiry or "-" }}
                 </td>
@@ -83,17 +92,16 @@
                     </form>
                   </div>
 
-                  <!-- بيانات للجوال -->
+                  <!-- بيانات إضافية للجوال -->
                   <div class="d-md-none small text-muted mt-2 text-start">
                     <div>الجنسية: {{ r.nationality or "-" }}</div>
                     <div>الجوال: {{ r.mobile or "-" }}</div>
                   </div>
 
                   <div class="d-lg-none small text-muted mt-2 text-start">
-                    <div>الراتب الأساسي: {{ '%.2f'|format(r.basic_salary|float) }}</div>
-                    <div>العمولة: {{ '%.2f'|format(r.commission|float) }}</div>
-                    <div>إجمالي المرتب: {{ '%.2f'|format(total_salary) }}</div>
-                    <div>المديونيات: {{ '%.2f'|format(r.debts|float) }}</div>
+                    <div>رقم العقد: {{ r.contract_no or "-" }}</div>
+                    <div>رقم الجواز: {{ r.passport_no or "-" }}</div>
+                    <div>رقم الإقامة: {{ r.iqama_no or "-" }}</div>
                   </div>
                 </td>
               </tr>

@@ -240,3 +240,15 @@ CREATE TABLE IF NOT EXISTS important_links (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT
 );
+
+-- =========================
+-- Home Slides
+-- =========================
+CREATE TABLE IF NOT EXISTS home_slides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename TEXT NOT NULL,
+    original_name TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

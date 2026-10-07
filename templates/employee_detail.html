@@ -50,6 +50,14 @@
             انتهاء: {{ row.insurance_expiry or "-" }}
           </div>
         </div>
+
+        <div class="col-12 col-md-4">
+          <div class="p-3 rounded {{ status_color(row.contract_expiry) }}">
+            <b>العقد</b><br>
+            رقم: {{ row.contract_no or "-" }}<br>
+            انتهاء: {{ row.contract_expiry or "-" }}
+          </div>
+        </div>
       </div>
 
       <hr>

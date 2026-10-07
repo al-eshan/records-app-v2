@@ -2,6 +2,7 @@
 import os
 import json
 import sqlite3
+import uuid
 import urllib.request
 import urllib.error
 
@@ -12,10 +13,11 @@ from functools import wraps
 from flask import (
     Flask, g, render_template,
     request, redirect, url_for, session, flash,
-    send_file
+    send_file, send_from_directory
 )
 
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
 from openpyxl import Workbook
 
@@ -29,6 +31,23 @@ BASE_DIR = os.path.dirname(__file__)
 # - Render / Production  → /var/data/data.db
 # - Local development    → ./data.db
 DATABASE = os.environ.get("DATABASE_PATH") or os.path.join(BASE_DIR, "data.db")
+
+# =========================
+# Home Slider / Uploads
+# =========================
+# Production (Render): if DATABASE_PATH=/var/data/data.db, slides go to /var/data/home_slides
+# Local: slides go to ./home_slides beside data.db
+SLIDES_DIR = os.path.join(os.path.dirname(DATABASE), "home_slides")
+os.makedirs(SLIDES_DIR, exist_ok=True)
+
+ALLOWED_SLIDE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+
+
+def allowed_slide_file(filename):
+    return (
+        "." in (filename or "")
+        and filename.rsplit(".", 1)[1].lower() in ALLOWED_SLIDE_EXTENSIONS
+    )
 
 # المستخدم الرئيسي (فقط هذا يدخل صفحة الصلاحيات)
 MASTER_USERNAME = "adm-es"
@@ -54,6 +73,7 @@ PERM_KEYS = [
     "suggestions",
     "accounting_analytics",
    "important_links",
+    "home_slides",
     "permissions",
 ]
 
@@ -77,11 +97,14 @@ PERM_LABELS = {
     "suggestions": "الاقتراحات",
     "accounting_analytics": "التحليلات المحاسبية",
     "important_links": "روابط مهمة",
+    "home_slides": "إدارة صور الرئيسية",
     "permissions": "الصلاحيات",
 }
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("APP_SECRET", "change-this-secret")
+# حد الرفع للطلب الواحد: 50 MB
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
 
 # =========================
@@ -239,6 +262,33 @@ def ensure_important_links_schema(db):
     db.commit()
 
 
+def ensure_home_slides_schema(db):
+    """Ensure the home slider table exists and can be upgraded safely."""
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS home_slides (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        filename TEXT NOT NULL,
+        original_name TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    """)
+
+    cols = [r[1] for r in db.execute("PRAGMA table_info(home_slides)").fetchall()]
+
+    if "original_name" not in cols:
+        db.execute("ALTER TABLE home_slides ADD COLUMN original_name TEXT")
+    if "sort_order" not in cols:
+        db.execute("ALTER TABLE home_slides ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+    if "is_active" not in cols:
+        db.execute("ALTER TABLE home_slides ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+    if "created_at" not in cols:
+        db.execute("ALTER TABLE home_slides ADD COLUMN created_at TEXT")
+
+    db.commit()
+
+
 def ensure_master_user():
     """Ensure master user exists and has ALL perms = 1."""
     db = get_db()
@@ -280,6 +330,7 @@ def _ensure_bootstrap():
         ensure_financial_commitments_schema(db)
         ensure_debts_ledger_schema(db)
         ensure_important_links_schema(db)
+        ensure_home_slides_schema(db)
 
         ensure_master_user()
 
@@ -739,7 +790,234 @@ def logout():
 @login_required
 @permission_required("home")
 def home():
-    return render_template("home.html")
+    db = get_db()
+    ensure_home_slides_schema(db)
+
+    slides = db.execute("""
+        SELECT id, filename, original_name, sort_order, is_active, created_at
+        FROM home_slides
+        WHERE is_active = 1
+        ORDER BY sort_order ASC, id ASC
+    """).fetchall()
+
+    return render_template(
+        "home.html",
+        slides=slides
+    )
+
+
+# =========================
+# Home Slider Management
+# =========================
+@app.route("/home-slides/file/<path:filename>")
+@login_required
+def home_slide_file(filename):
+    return send_from_directory(
+        SLIDES_DIR,
+        filename
+    )
+
+
+@app.route("/home-slides", methods=["GET", "POST"])
+@login_required
+@permission_required("home_slides")
+def home_slides():
+    db = get_db()
+    ensure_home_slides_schema(db)
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip()
+        slide_id = (request.form.get("id") or "").strip()
+
+        # =========================
+        # رفع صورة / عدة صور
+        # =========================
+        if action == "upload":
+            files = request.files.getlist("images")
+            uploaded_count = 0
+
+            max_order_row = db.execute("""
+                SELECT COALESCE(MAX(sort_order), 0) AS m
+                FROM home_slides
+            """).fetchone()
+
+            next_order = int(max_order_row["m"] or 0)
+
+            for file in files:
+                if not file or not file.filename:
+                    continue
+
+                if not allowed_slide_file(file.filename):
+                    flash(
+                        f"صيغة الملف غير مدعومة: {file.filename}",
+                        "warning"
+                    )
+                    continue
+
+                safe_name = secure_filename(file.filename)
+                extension = file.filename.rsplit(".", 1)[1].lower()
+
+                # اسم عشوائي يمنع التعارض حتى لو تكرر اسم الصورة
+                new_filename = f"{uuid.uuid4().hex}.{extension}"
+                save_path = os.path.join(SLIDES_DIR, new_filename)
+
+                try:
+                    file.save(save_path)
+                except Exception as e:
+                    print("home slide upload error:", e)
+                    flash(
+                        f"تعذر رفع الصورة: {file.filename}",
+                        "danger"
+                    )
+                    continue
+
+                next_order += 1
+
+                db.execute("""
+                    INSERT INTO home_slides (
+                        filename,
+                        original_name,
+                        sort_order,
+                        is_active,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, 1, datetime('now'))
+                """, (
+                    new_filename,
+                    safe_name or file.filename,
+                    next_order
+                ))
+
+                uploaded_count += 1
+
+            db.commit()
+
+            if uploaded_count:
+                flash(
+                    f"تم رفع {uploaded_count} صورة بنجاح",
+                    "success"
+                )
+            elif not files:
+                flash("اختر صورة واحدة على الأقل", "warning")
+
+        # =========================
+        # حذف
+        # =========================
+        elif action == "delete" and slide_id:
+            row = db.execute("""
+                SELECT filename
+                FROM home_slides
+                WHERE id=?
+            """, (slide_id,)).fetchone()
+
+            if row:
+                file_path = os.path.join(
+                    SLIDES_DIR,
+                    row["filename"]
+                )
+
+                try:
+                    if os.path.isfile(file_path):
+                        os.remove(file_path)
+                except Exception as e:
+                    # لا نمنع حذف السجل إذا تعذر حذف الملف
+                    print("home slide delete file error:", e)
+
+                db.execute(
+                    "DELETE FROM home_slides WHERE id=?",
+                    (slide_id,)
+                )
+                db.commit()
+                flash("تم حذف الصورة", "warning")
+
+        # =========================
+        # إظهار / إخفاء
+        # =========================
+        elif action == "toggle_active" and slide_id:
+            row = db.execute("""
+                SELECT is_active
+                FROM home_slides
+                WHERE id=?
+            """, (slide_id,)).fetchone()
+
+            if row:
+                new_value = 0 if int(row["is_active"] or 0) == 1 else 1
+
+                db.execute("""
+                    UPDATE home_slides
+                    SET is_active=?
+                    WHERE id=?
+                """, (
+                    new_value,
+                    slide_id
+                ))
+                db.commit()
+
+        # =========================
+        # ترتيب أعلى / أسفل
+        # =========================
+        elif action in ("move_up", "move_down") and slide_id:
+            row = db.execute("""
+                SELECT id, sort_order
+                FROM home_slides
+                WHERE id=?
+            """, (slide_id,)).fetchone()
+
+            if row:
+                if action == "move_up":
+                    other = db.execute("""
+                        SELECT id, sort_order
+                        FROM home_slides
+                        WHERE sort_order < ?
+                        ORDER BY sort_order DESC, id DESC
+                        LIMIT 1
+                    """, (
+                        row["sort_order"],
+                    )).fetchone()
+                else:
+                    other = db.execute("""
+                        SELECT id, sort_order
+                        FROM home_slides
+                        WHERE sort_order > ?
+                        ORDER BY sort_order ASC, id ASC
+                        LIMIT 1
+                    """, (
+                        row["sort_order"],
+                    )).fetchone()
+
+                if other:
+                    db.execute("""
+                        UPDATE home_slides
+                        SET sort_order=?
+                        WHERE id=?
+                    """, (
+                        other["sort_order"],
+                        row["id"]
+                    ))
+
+                    db.execute("""
+                        UPDATE home_slides
+                        SET sort_order=?
+                        WHERE id=?
+                    """, (
+                        row["sort_order"],
+                        other["id"]
+                    ))
+
+                    db.commit()
+
+        return redirect(url_for("home_slides"))
+
+    rows = db.execute("""
+        SELECT id, filename, original_name, sort_order, is_active, created_at
+        FROM home_slides
+        ORDER BY sort_order ASC, id ASC
+    """).fetchall()
+
+    return render_template(
+        "home_slides.html",
+        rows=rows
+    )
 
 
 # =========================
@@ -764,6 +1042,7 @@ def ensure_daily_accounting_schema(db):
           cash_end REAL NOT NULL DEFAULT 0,
           cash_received REAL NOT NULL DEFAULT 0,
           mada REAL NOT NULL DEFAULT 0,
+          bank_transfers REAL NOT NULL DEFAULT 0,
           total_in_enjaz REAL NOT NULL DEFAULT 0,
           notes TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -824,6 +1103,8 @@ def ensure_daily_accounting_schema(db):
         db.execute("ALTER TABLE daily_header ADD COLUMN total_in_enjaz REAL NOT NULL DEFAULT 0")
     if "mada" not in cols:
         db.execute("ALTER TABLE daily_header ADD COLUMN mada REAL NOT NULL DEFAULT 0")
+    if "bank_transfers" not in cols:
+        db.execute("ALTER TABLE daily_header ADD COLUMN bank_transfers REAL NOT NULL DEFAULT 0")
     if "cash_received" not in cols:
         db.execute("ALTER TABLE daily_header ADD COLUMN cash_received REAL NOT NULL DEFAULT 0")
 
@@ -899,6 +1180,7 @@ def accounting_daily(kind):
         cash_end = _to_float(request.form.get("cash_end"), 0)
         cash_received = _to_float(request.form.get("cash_received"), 0)
         mada = _to_float(request.form.get("mada"), 0)
+        bank_transfers = _to_float(request.form.get("bank_transfers"), 0)
         total_in_enjaz = _to_float(request.form.get("total_in_enjaz"), 0)
         notes = (request.form.get("notes") or "").strip() or None
 
@@ -920,6 +1202,7 @@ def accounting_daily(kind):
                 cash_end=?,
                 cash_received=?,
                 mada=?,
+                bank_transfers=?,
                 total_in_enjaz=?,
                 notes=?,
                 updated_at=datetime('now')
@@ -929,6 +1212,7 @@ def accounting_daily(kind):
             cash_end,
             cash_received,
             mada,
+            bank_transfers,
             total_in_enjaz,
             notes,
             header_id,
@@ -1053,13 +1337,16 @@ def accounting_daily(kind):
     cash_end = _to_float(header["cash_end"], 0) if header else 0.0
     cash_received = _to_float(header["cash_received"], 0) if header else 0.0
     mada = _to_float(header["mada"], 0) if header else 0.0
+    bank_transfers = _to_float(header["bank_transfers"], 0) if header else 0.0
     total_in_enjaz = _to_float(header["total_in_enjaz"], 0) if header else 0.0
 
     totals["cash_start"] = cash_start
     totals["cash_end"] = cash_end
-    totals["cash_diff"] = cash_end - cash_start
+    # فرق الصندوق = صندوق النهاية - صندوق البداية + الكاش المستلم
+    totals["cash_diff"] = cash_end - cash_start + cash_received
     totals["cash_received"] = cash_received
     totals["mada"] = mada
+    totals["bank_transfers"] = bank_transfers
     totals["total_in_enjaz"] = total_in_enjaz
 
     totals["total_overall"] = (
@@ -1067,6 +1354,7 @@ def accounting_daily(kind):
         + cash_received
         + totals["tamara"]
         + mada
+        + bank_transfers
         + totals["inputs"]
         + totals["general"]
         + totals["petty"]
@@ -1106,6 +1394,7 @@ def accounting_movements(kind):
                cash_end,
                cash_received,
                mada,
+               bank_transfers,
                total_in_enjaz
           FROM daily_header
          WHERE es=?
@@ -1124,6 +1413,7 @@ def accounting_movements(kind):
     overall_cash_diff = 0.0
     overall_cash_received = 0.0
     overall_mada = 0.0
+    overall_bank_transfers = 0.0
     overall_total_in_enjaz = 0.0
 
     for h in headers:
@@ -1134,13 +1424,32 @@ def accounting_movements(kind):
             (hid,)
         ).fetchone()["s"], 0)
 
-        total_tamara = _to_float(db.execute(
+        # تمارا/إمكان: ندعم البيانات القديمة من daily_tamara_emkan
+        # والبيانات الحالية المخزنة في daily_expenses_general.
+        old_tamara = _to_float(db.execute(
             "SELECT COALESCE(SUM(amount),0) AS s FROM daily_tamara_emkan WHERE header_id=?",
             (hid,)
         ).fetchone()["s"], 0)
 
+        current_tamara = _to_float(db.execute(
+            '''
+            SELECT COALESCE(SUM(amount),0) AS s
+            FROM daily_expenses_general
+            WHERE header_id=?
+              AND payment_kind IN ('tamara', 'emkan')
+            ''',
+            (hid,)
+        ).fetchone()["s"], 0)
+
+        total_tamara = old_tamara + current_tamara
+
         total_general = _to_float(db.execute(
-            "SELECT COALESCE(SUM(amount),0) AS s FROM daily_expenses_general WHERE header_id=?",
+            '''
+            SELECT COALESCE(SUM(amount),0) AS s
+            FROM daily_expenses_general
+            WHERE header_id=?
+              AND payment_kind IN ('debt', 'payment')
+            ''',
             (hid,)
         ).fetchone()["s"], 0)
 
@@ -1151,9 +1460,10 @@ def accounting_movements(kind):
 
         cash_start = _to_float(h["cash_start"], 0)
         cash_end = _to_float(h["cash_end"], 0)
-        cash_diff = cash_end - cash_start
         cash_received = _to_float(h["cash_received"], 0)
+        cash_diff = cash_end - cash_start + cash_received
         mada = _to_float(h["mada"], 0)
+        bank_transfers = _to_float(h["bank_transfers"], 0)
         total_in_enjaz = _to_float(h["total_in_enjaz"], 0)
 
         total_overall = (
@@ -1161,6 +1471,7 @@ def accounting_movements(kind):
             + cash_received
             + total_tamara
             + mada
+            + bank_transfers
             + total_inputs
             + total_general
             + total_petty
@@ -1176,6 +1487,7 @@ def accounting_movements(kind):
             "cash_received": cash_received,
             "tamara": total_tamara,
             "mada": mada,
+            "bank_transfers": bank_transfers,
             "total_inputs": total_inputs,
             "total_general": total_general,
             "total_petty": total_petty,
@@ -1193,6 +1505,7 @@ def accounting_movements(kind):
         overall_cash_diff += cash_diff
         overall_cash_received += cash_received
         overall_mada += mada
+        overall_bank_transfers += bank_transfers
         overall_total_in_enjaz += total_in_enjaz
 
     overall_total_overall = (
@@ -1200,6 +1513,7 @@ def accounting_movements(kind):
         + overall_cash_received
         + overall_tamara
         + overall_mada
+        + overall_bank_transfers
         + overall_inputs
         + overall_general
         + overall_petty
@@ -1217,6 +1531,7 @@ def accounting_movements(kind):
         "cash_diff": overall_cash_diff,
         "cash_received": overall_cash_received,
         "mada": overall_mada,
+        "bank_transfers": overall_bank_transfers,
         "total_in_enjaz": overall_total_in_enjaz,
         "total_overall": overall_total_overall,
         "error": overall_error,
@@ -2422,6 +2737,10 @@ def ensure_employees_schema(db):
         db.execute("ALTER TABLE employees ADD COLUMN bank_account TEXT")
     if "debts" not in cols:
         db.execute("ALTER TABLE employees ADD COLUMN debts REAL NOT NULL DEFAULT 0")
+    if "contract_no" not in cols:
+        db.execute("ALTER TABLE employees ADD COLUMN contract_no TEXT")
+    if "contract_expiry" not in cols:
+        db.execute("ALTER TABLE employees ADD COLUMN contract_expiry TEXT")
 
     db.commit()
 
@@ -2435,10 +2754,10 @@ def employees_list():
 
     rows = db.execute("""
         SELECT id, name_ar, name_en, nationality, mobile,
+               contract_no, contract_expiry,
                passport_no, passport_expiry,
                iqama_no, iqama_expiry,
-               insurance_name, insurance_expiry,
-               basic_salary, commission, bank_account, debts
+               insurance_name, insurance_expiry
         FROM employees
         ORDER BY id ASC
     """).fetchall()
@@ -2451,16 +2770,14 @@ def employees_list():
             "name_en": r["name_en"],
             "nationality": r["nationality"],
             "mobile": r["mobile"],
+            "contract_no": r["contract_no"],
+            "contract_expiry": parse_date(r["contract_expiry"]) if r["contract_expiry"] else None,
             "passport_no": r["passport_no"],
             "passport_expiry": parse_date(r["passport_expiry"]) if r["passport_expiry"] else None,
             "iqama_no": r["iqama_no"],
             "iqama_expiry": parse_date(r["iqama_expiry"]) if r["iqama_expiry"] else None,
             "insurance_name": r["insurance_name"],
             "insurance_expiry": parse_date(r["insurance_expiry"]) if r["insurance_expiry"] else None,
-            "basic_salary": r["basic_salary"],
-            "commission": r["commission"],
-            "bank_account": r["bank_account"],
-            "debts": r["debts"],
         })
 
     return render_template("employees_list.html", rows=data)
@@ -2485,6 +2802,8 @@ def employee_new():
             "iqama_expiry": request.form.get("iqama_expiry", "").strip() or None,
             "insurance_name": request.form.get("insurance_name", "").strip(),
             "insurance_expiry": request.form.get("insurance_expiry", "").strip() or None,
+            "contract_no": request.form.get("contract_no", "").strip(),
+            "contract_expiry": request.form.get("contract_expiry", "").strip() or None,
             "basic_salary": _to_float(request.form.get("basic_salary"), 0),
             "commission": _to_float(request.form.get("commission"), 0),
             "bank_account": request.form.get("bank_account", "").strip(),
@@ -2501,9 +2820,10 @@ def employee_new():
               passport_no, passport_expiry,
               iqama_no, iqama_expiry,
               insurance_name, insurance_expiry,
+              contract_no, contract_expiry,
               basic_salary, commission, bank_account, debts
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             payload["name_ar"],
             payload["name_en"],
@@ -2515,6 +2835,8 @@ def employee_new():
             payload["iqama_expiry"],
             payload["insurance_name"],
             payload["insurance_expiry"],
+            payload["contract_no"],
+            payload["contract_expiry"],
             payload["basic_salary"],
             payload["commission"],
             payload["bank_account"],
@@ -2527,12 +2849,14 @@ def employee_new():
 
         ws, err = open_ws("employees")
         if not err:
+            # نضيف حقول العقد في نهاية Google Sheets للحفاظ على ترتيب الأعمدة القديمة.
             headers = [
                 "id", "name_ar", "name_en", "nationality", "mobile",
                 "passport_no", "passport_expiry",
                 "iqama_no", "iqama_expiry",
                 "insurance_name", "insurance_expiry",
-                "basic_salary", "commission", "bank_account", "debts"
+                "basic_salary", "commission", "bank_account", "debts",
+                "contract_no", "contract_expiry"
             ]
 
             ws_ensure_headers(ws, headers)
@@ -2553,6 +2877,8 @@ def employee_new():
                 payload["commission"] or "",
                 payload["bank_account"],
                 payload["debts"],
+                payload["contract_no"],
+                payload["contract_expiry"] or "",
             ], new_id)
 
             if not ok:
@@ -2579,7 +2905,7 @@ def employee_detail(eid: int):
 
     row = dict(r)
 
-    for k in ("passport_expiry", "iqama_expiry", "insurance_expiry"):
+    for k in ("passport_expiry", "iqama_expiry", "insurance_expiry", "contract_expiry"):
         row[k] = parse_date(row[k]) if row.get(k) else None
 
     return render_template("employee_detail.html", row=row)
@@ -2605,6 +2931,7 @@ def employee_edit(eid: int):
         "passport_no", "passport_expiry",
         "iqama_no", "iqama_expiry",
         "insurance_name", "insurance_expiry",
+        "contract_no", "contract_expiry",
         "bank_account"
     ]:
         row[k] = row.get(k) or ""
@@ -2625,6 +2952,8 @@ def employee_edit(eid: int):
             "iqama_expiry": request.form.get("iqama_expiry", "").strip() or None,
             "insurance_name": request.form.get("insurance_name", "").strip(),
             "insurance_expiry": request.form.get("insurance_expiry", "").strip() or None,
+            "contract_no": request.form.get("contract_no", "").strip(),
+            "contract_expiry": request.form.get("contract_expiry", "").strip() or None,
             "basic_salary": _to_float(request.form.get("basic_salary"), 0),
             "commission": _to_float(request.form.get("commission"), 0),
             "bank_account": request.form.get("bank_account", "").strip(),
@@ -2647,6 +2976,8 @@ def employee_edit(eid: int):
                 iqama_expiry=?,
                 insurance_name=?,
                 insurance_expiry=?,
+                contract_no=?,
+                contract_expiry=?,
                 basic_salary=?,
                 commission=?,
                 bank_account=?,
@@ -2663,6 +2994,8 @@ def employee_edit(eid: int):
             payload["iqama_expiry"],
             payload["insurance_name"],
             payload["insurance_expiry"],
+            payload["contract_no"],
+            payload["contract_expiry"],
             payload["basic_salary"],
             payload["commission"],
             payload["bank_account"],
@@ -2676,12 +3009,14 @@ def employee_edit(eid: int):
             ws, err = open_ws("employees")
 
             if not err:
+                # نضيف حقول العقد في نهاية Google Sheets للحفاظ على ترتيب الأعمدة القديمة.
                 headers = [
                     "id", "name_ar", "name_en", "nationality", "mobile",
                     "passport_no", "passport_expiry",
                     "iqama_no", "iqama_expiry",
                     "insurance_name", "insurance_expiry",
-                    "basic_salary", "commission", "bank_account", "debts"
+                    "basic_salary", "commission", "bank_account", "debts",
+                    "contract_no", "contract_expiry"
                 ]
 
                 ws_ensure_headers(ws, headers)
@@ -2702,6 +3037,8 @@ def employee_edit(eid: int):
                     payload["commission"] or "",
                     payload["bank_account"],
                     payload["debts"],
+                    payload["contract_no"],
+                    payload["contract_expiry"] or "",
                 ], eid)
 
                 if not ok:
@@ -2715,6 +3052,7 @@ def employee_edit(eid: int):
         return redirect(url_for("employee_detail", eid=eid))
 
     return render_template("employee_form.html", mode="edit", row=row)
+
 
 @app.route("/employees/<int:eid>/delete", methods=["POST"])
 @login_required
@@ -2748,7 +3086,9 @@ def employee_delete(eid: int):
         return redirect(url_for("employees_list"))
 
     flash("تم حذف الموظف", "info")
-    return redirect(url_for("employees_list"))# =========================
+    return redirect(url_for("employees_list"))
+
+# =========================
 # Tasks
 # =========================
 @app.route("/tasks", methods=["GET", "POST"])
@@ -2757,11 +3097,16 @@ def employee_delete(eid: int):
 def tasks():
     db = get_db()
 
-    # تأكد من جدول الالتزامات
+    # تأكد من الجداول المطلوبة
     try:
         ensure_financial_commitments_schema(db)
     except Exception as e:
         print("ensure_financial_commitments_schema error:", e)
+
+    try:
+        ensure_employees_schema(db)
+    except Exception as e:
+        print("ensure_employees_schema error:", e)
 
     # إضافة مهمة يدوية
     if request.method == "POST":
@@ -2857,17 +3202,22 @@ def tasks():
                 "color": status_color(d),
             })
 
-    # موظفين: جواز/إقامة/تأمين
+    # موظفين: جواز/إقامة/تأمين/عقد
     try:
         emp_rows = db.execute("""
-            SELECT name_ar, passport_expiry, iqama_expiry, insurance_expiry
+            SELECT name_ar,
+                   passport_expiry,
+                   iqama_expiry,
+                   insurance_expiry,
+                   contract_no,
+                   contract_expiry
               FROM employees
         """).fetchall()
     except Exception as e:
         print("employees alerts error:", e)
         emp_rows = []
 
-    def add_emp_alert(title, expiry):
+    def add_emp_alert(title, expiry, number="-"):
         d = _safe_fromiso(expiry)
         if not d:
             return
@@ -2877,7 +3227,7 @@ def tasks():
         alerts.append({
             "source": "الموظفين",
             "name": title,
-            "number": "-",
+            "number": number or "-",
             "expiry": d.isoformat(),
             "days_left": dl,
             "color": status_color(d),
@@ -2888,6 +3238,11 @@ def tasks():
         add_emp_alert(f"انتهاء جواز {name}", e["passport_expiry"])
         add_emp_alert(f"انتهاء إقامة {name}", e["iqama_expiry"])
         add_emp_alert(f"انتهاء تأمين {name}", e["insurance_expiry"])
+        add_emp_alert(
+            f"انتهاء عقد {name}",
+            e["contract_expiry"],
+            e["contract_no"] or "-"
+        )
 
     alerts.sort(key=lambda x: x["expiry"] or "9999-12-31")
     # --- تصدير tasks_auto (Snapshot) ---

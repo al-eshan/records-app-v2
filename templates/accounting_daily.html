@@ -88,6 +88,12 @@
           </div>
 
           <div class="col-6 col-md-3">
+            <label class="form-label">الحوالات البنكية</label>
+            <input type="number" step="0.01" class="form-control bank-transfers" name="bank_transfers"
+                   value="{{ header.bank_transfers if header else '' }}" placeholder="0">
+          </div>
+
+          <div class="col-6 col-md-3">
             <label class="form-label">الإجمالي الكلي في إنجاز</label>
             <input type="number" step="0.01" class="form-control total-in-enjaz" name="total_in_enjaz"
                    value="{{ header.total_in_enjaz if header else '' }}" placeholder="0">
@@ -243,6 +249,11 @@
           </div></div>
 
           <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">إجمالي الحوالات البنكية</div>
+            <div class="fs-5 fw-bold" id="total-bank-transfers">{{ '%.2f'|format(totals.bank_transfers) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
             <div class="small text-muted">إجمالي المشتريات النقدية</div>
             <div class="fs-5 fw-bold" id="total-inputs">{{ '%.2f'|format(totals.inputs) }}</div>
           </div></div>
@@ -349,9 +360,11 @@ function recalcTotals(){
   const cashEnd = toFloat(document.querySelector('.cash-end')?.value);
   const cashReceived = toFloat(document.querySelector('.cash-received')?.value);
   const mada = toFloat(document.querySelector('.mada')?.value);
+  const bankTransfers = toFloat(document.querySelector('.bank-transfers')?.value);
   const inEnjaz = toFloat(document.querySelector('.total-in-enjaz')?.value);
 
-  const cashDiff = cashEnd - cashStart;
+  // فرق الصندوق = صندوق النهاية - صندوق البداية + الكاش المستلم
+  const cashDiff = cashEnd - cashStart + cashReceived;
 
   const totalOverall =
     (
@@ -359,6 +372,7 @@ function recalcTotals(){
       + cashReceived
       + tamara
       + mada
+      + bankTransfers
       + inputs
       + general
       + petty
@@ -376,6 +390,7 @@ function recalcTotals(){
   setText('total-cash-diff', cashDiff);
   setText('total-cash-received', cashReceived);
   setText('total-mada', mada);
+  setText('total-bank-transfers', bankTransfers);
 
   setText('total-overall', totalOverall);
   setText('total-error', error);
@@ -392,6 +407,7 @@ document.addEventListener('input', (e) => {
     '.cash-end,' +
     '.cash-received,' +
     '.mada,' +
+    '.bank-transfers,' +
     '.total-in-enjaz'
   )) {
     recalcTotals();
