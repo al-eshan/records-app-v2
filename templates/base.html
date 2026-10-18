@@ -59,6 +59,37 @@
     href="{{ url_for('static', filename='css/app.css') }}"
   >
 
+  <!-- إضافات القائمة الجانبية -->
+  <style>
+    .sidebar-brand-logo-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 8px 12px;
+    }
+
+    .sidebar-brand-logo {
+      display: block;
+      width: 215px;
+      max-width: 92%;
+      max-height: 96px;
+      height: auto;
+      object-fit: contain;
+    }
+
+    .sidebar-nav.cards .menu-card-wide {
+      grid-column: 1 / -1;
+      width: 100%;
+    }
+
+    @media (max-width: 767.98px) {
+      .sidebar-brand-logo {
+        width: 205px;
+        max-height: 92px;
+      }
+    }
+  </style>
+
   {% block head %}{% endblock %}
 </head>
 
@@ -91,13 +122,16 @@
 
       <div class="sidebar-header">
 
-        <div class="brand">
-          ال عِشان
-          <br>
-
-          <small>
-            لقطع غيار السيارات
-          </small>
+        <!--
+          ضع صورة الشعار هنا:
+          static/img/sidebar-logo.png
+        -->
+        <div class="sidebar-brand-logo-wrap">
+          <img
+            src="{{ url_for('static', filename='img/sidebar-logo.png') }}"
+            alt="شعار آل عشان"
+            class="sidebar-brand-logo"
+          >
         </div>
 
       </div>
@@ -202,6 +236,18 @@
             class="menu-card {% if request.path.startswith('/permissions') %}active{% endif %}"
           >
             الصلاحيات
+          </a>
+
+        {% endif %}
+
+
+        {% if perms.get('dashboard') %}
+
+          <a
+            href="{{ url_for('dashboard') }}"
+            class="menu-card menu-card-wide {% if request.path.startswith('/dashboard') %}active{% endif %}"
+          >
+            📊 لوحة المتابعة
           </a>
 
         {% endif %}
@@ -378,7 +424,6 @@
 
   <!-- ========================= -->
   <!-- Bootstrap JavaScript -->
-  <!-- هذا هو الجزء الذي كان ناقصًا -->
   <!-- ========================= -->
 
   <script

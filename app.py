@@ -74,6 +74,7 @@ PERM_KEYS = [
     "accounting_analytics",
    "important_links",
     "home_slides",
+    "dashboard",
     "permissions",
 ]
 
@@ -98,6 +99,7 @@ PERM_LABELS = {
     "accounting_analytics": "التحليلات المحاسبية",
     "important_links": "روابط مهمة",
     "home_slides": "إدارة صور الرئيسية",
+    "dashboard": "لوحة المتابعة",
     "permissions": "الصلاحيات",
 }
 
@@ -804,6 +806,16 @@ def home():
         "home.html",
         slides=slides
     )
+
+
+# =========================
+# Follow-up Dashboard (Power BI)
+# =========================
+@app.route("/dashboard")
+@login_required
+@permission_required("dashboard")
+def dashboard():
+    return render_template("dashboard.html")
 
 
 # =========================
