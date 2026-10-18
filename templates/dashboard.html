@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<style>
+  .container-fluid.py-3 {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  .dashboard-full {
+    width: 100%;
+    height: calc(100vh - 8px);
+    min-height: 620px;
+    overflow: hidden;
+    background: #fff;
+  }
+
+  .dashboard-full iframe {
+    width: 100%;
+    height: 100%;
+    display: block;
+    border: 0;
+  }
+
+  @media (max-width: 767.98px) {
+    .dashboard-full {
+      height: calc(100vh - 66px);
+      min-height: 520px;
+    }
+  }
+</style>
+
+<div class="dashboard-full">
+  <iframe
+    title="Main"
+    src="https://app.powerbi.com/view?r=eyJrIjoiMmZlMzY4NDgtYzkzZS00ODFmLTk4N2MtMDJhNzM3NGJiYjEyIiwidCI6ImYxZDVkZjYzLTJjOTgtNDA4Yi04MTliLThlOWQ4YjRmMDM4YyIsImMiOjl9"
+    frameborder="0"
+    allowfullscreen="true"
+  ></iframe>
+</div>
+
+{% endblock %}
