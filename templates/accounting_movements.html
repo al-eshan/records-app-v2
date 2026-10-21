@@ -4,6 +4,15 @@
 <style>
   .movements-actions a { white-space: nowrap; }
 
+  .approval-badge{
+    display:inline-block;
+    min-width:150px;
+    padding:.55rem .7rem;
+    border-radius:999px;
+    font-weight:700;
+    white-space:nowrap;
+  }
+
   .mv-card{
     border: 1px solid rgba(255,255,255,.12);
     border-radius: 14px;
@@ -73,20 +82,29 @@
       </div>
 
       <form method="get" class="row g-3 align-items-end mb-4">
-        <div class="col-12 col-md-4">
+        <div class="col-12 col-md-3">
           <label class="form-label">من تاريخ</label>
           <input type="date" class="form-control" name="from" value="{{ date_from }}">
         </div>
 
-        <div class="col-12 col-md-4">
+        <div class="col-12 col-md-3">
           <label class="form-label">إلى تاريخ</label>
           <input type="date" class="form-control" name="to" value="{{ date_to }}">
         </div>
 
-        <div class="col-12 col-md-4 d-flex gap-2">
+        <div class="col-12 col-md-3">
+          <label class="form-label">فرز حسب</label>
+          <select class="form-select" name="approval">
+            <option value="" {% if not approval_filter %}selected{% endif %}>لا شيء</option>
+            <option value="settled" {% if approval_filter == 'settled' %}selected{% endif %}>تمت التسوية بنجاح</option>
+            <option value="rejected" {% if approval_filter == 'rejected' %}selected{% endif %}>مرفوض وتحت المعالجة</option>
+          </select>
+        </div>
+
+        <div class="col-12 col-md-3 d-flex gap-2">
           <button class="btn btn-success flex-grow-1 flex-md-grow-0" type="submit">بحث</button>
           <a class="btn btn-secondary flex-grow-1 flex-md-grow-0"
-             href="{{ url_for('accounting_movements', kind=kind, **{'from': date_from, 'to': date_to}) }}">
+             href="{{ url_for('accounting_movements', kind=kind, **{'from': date_from, 'to': date_to, 'approval': approval_filter}) }}">
             تحديث
           </a>
         </div>
@@ -167,6 +185,7 @@
             <thead>
               <tr>
                 <th>التاريخ</th>
+                <th>اعتماد الإدارة المالية</th>
                 <th>صندوق البداية</th>
                 <th>صندوق النهاية</th>
                 <th>فرق الصندوق</th>
@@ -187,13 +206,22 @@
             <tbody>
               {% if rows|length == 0 %}
               <tr>
-                <td colspan="15" class="text-center text-muted py-4">لا توجد بيانات ضمن هذه المدة</td>
+                <td colspan="16" class="text-center text-muted py-4">لا توجد بيانات ضمن هذه المدة</td>
               </tr>
               {% endif %}
 
               {% for r in rows %}
               <tr>
                 <td class="fw-semibold">{{ r.day_date }}</td>
+                <td>
+                  {% if r.financial_approval_status == 'settled' %}
+                    <span class="badge bg-success approval-badge">تمت التسوية بنجاح</span>
+                  {% elif r.financial_approval_status == 'rejected' %}
+                    <span class="badge bg-danger approval-badge">مرفوض وتحت المعالجة</span>
+                  {% else %}
+                    <span class="badge bg-secondary approval-badge">لم يتم الاعتماد</span>
+                  {% endif %}
+                </td>
                 <td>{{ '%.2f'|format(r.cash_start or 0) }}</td>
                 <td>{{ '%.2f'|format(r.cash_end or 0) }}</td>
                 <td>{{ '%.2f'|format(r.cash_diff or 0) }}</td>
@@ -237,6 +265,16 @@
                  href="{{ url_for('accounting_daily', kind=kind, date=r.day_date) }}">
                 فتح
               </a>
+            </div>
+
+            <div class="mt-2">
+              {% if r.financial_approval_status == 'settled' %}
+                <span class="badge bg-success approval-badge">تمت التسوية بنجاح</span>
+              {% elif r.financial_approval_status == 'rejected' %}
+                <span class="badge bg-danger approval-badge">مرفوض وتحت المعالجة</span>
+              {% else %}
+                <span class="badge bg-secondary approval-badge">لم يتم الاعتماد</span>
+              {% endif %}
             </div>
 
             <div class="mv-kv">

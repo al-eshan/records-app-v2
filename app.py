@@ -7,7 +7,7 @@ import urllib.request
 import urllib.error
 
 from io import BytesIO
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 
 from flask import (
@@ -75,6 +75,8 @@ PERM_KEYS = [
    "important_links",
     "home_slides",
     "dashboard",
+    "accounting_edit_after_48h",
+    "financial_admin_approval",
     "permissions",
 ]
 
@@ -100,6 +102,8 @@ PERM_LABELS = {
     "important_links": "روابط مهمة",
     "home_slides": "إدارة صور الرئيسية",
     "dashboard": "لوحة المتابعة",
+    "accounting_edit_after_48h": "تعديل المحاسبة اليومية بعد 48 ساعة",
+    "financial_admin_approval": "اعتماد الإدارة المالية",
     "permissions": "الصلاحيات",
 }
 
@@ -1057,6 +1061,9 @@ def ensure_daily_accounting_schema(db):
           bank_transfers REAL NOT NULL DEFAULT 0,
           total_in_enjaz REAL NOT NULL DEFAULT 0,
           notes TEXT,
+          financial_approval_status TEXT NOT NULL DEFAULT '',
+          financial_approval_updated_at TEXT,
+          financial_approval_by TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT,
           UNIQUE(es, day_date)
@@ -1119,6 +1126,12 @@ def ensure_daily_accounting_schema(db):
         db.execute("ALTER TABLE daily_header ADD COLUMN bank_transfers REAL NOT NULL DEFAULT 0")
     if "cash_received" not in cols:
         db.execute("ALTER TABLE daily_header ADD COLUMN cash_received REAL NOT NULL DEFAULT 0")
+    if "financial_approval_status" not in cols:
+        db.execute("ALTER TABLE daily_header ADD COLUMN financial_approval_status TEXT NOT NULL DEFAULT ''")
+    if "financial_approval_updated_at" not in cols:
+        db.execute("ALTER TABLE daily_header ADD COLUMN financial_approval_updated_at TEXT")
+    if "financial_approval_by" not in cols:
+        db.execute("ALTER TABLE daily_header ADD COLUMN financial_approval_by TEXT")
 
     gen_cols = [r[1] for r in db.execute("PRAGMA table_info(daily_expenses_general)").fetchall()]
     if "payment_kind" not in gen_cols:
@@ -1169,6 +1182,37 @@ def _to_float(v, default=0.0):
         return float(default)
 
 
+def _saudi_now_naive():
+    """Current Saudi local time as a naive datetime for simple date-window checks."""
+    return datetime.now(timezone(timedelta(hours=3))).replace(tzinfo=None)
+
+
+def _accounting_edit_deadline(day_date: str):
+    """
+    Employee edit window: the accounting date stays editable until 48 hours
+    after 00:00 at the beginning of that accounting day (Saudi local time).
+    """
+    try:
+        d = datetime.strptime((day_date or "").strip(), "%Y-%m-%d").date()
+    except Exception:
+        return None
+    return datetime.combine(d, datetime.min.time()) + timedelta(hours=48)
+
+
+def _can_edit_accounting_day(day_date: str, perms: dict):
+    deadline = _accounting_edit_deadline(day_date)
+    if deadline is None:
+        return False, False
+
+    if _saudi_now_naive() < deadline:
+        return True, False
+
+    if bool((perms or {}).get("accounting_edit_after_48h")):
+        return True, True
+
+    return False, False
+
+
 @app.route("/accounting/<kind>/daily", methods=["GET", "POST"])
 @login_required
 def accounting_daily(kind):
@@ -1187,7 +1231,61 @@ def accounting_daily(kind):
     if request.method == "POST" and request.form.get("action") == "open_date":
         return redirect(url_for("accounting_daily", kind=kind, date=day_date))
 
+    perms = session.get("perms") or {}
+    can_edit_day, has_after_48h_override = _can_edit_accounting_day(day_date, perms)
+    edit_deadline = _accounting_edit_deadline(day_date)
+    can_finance_approve = bool(perms.get("financial_admin_approval"))
+
+    if request.method == "POST" and request.form.get("action") in ("finance_settled", "finance_rejected"):
+        if not can_finance_approve:
+            return render_template("no_permission.html"), 403
+
+        approval_status = (
+            "settled"
+            if request.form.get("action") == "finance_settled"
+            else "rejected"
+        )
+
+        approval_header = db.execute(
+            "SELECT id FROM daily_header WHERE es=? AND day_date=?",
+            (kind, day_date),
+        ).fetchone()
+
+        if not approval_header:
+            flash("احفظ المحاسبة اليومية أولاً قبل اعتماد الإدارة المالية.", "warning")
+            return redirect(url_for("accounting_daily", kind=kind, date=day_date))
+
+        db.execute(
+            """
+            UPDATE daily_header
+               SET financial_approval_status=?,
+                   financial_approval_updated_at=datetime('now'),
+                   financial_approval_by=?
+             WHERE id=?
+            """,
+            (
+                approval_status,
+                session.get("username") or "",
+                approval_header["id"],
+            ),
+        )
+        db.commit()
+
+        if approval_status == "settled":
+            flash("تم اعتماد الحالة: تمت التسوية بنجاح", "success")
+        else:
+            flash("تم اعتماد الحالة: مرفوض وتحت المعالجة", "danger")
+
+        return redirect(url_for("accounting_daily", kind=kind, date=day_date))
+
     if request.method == "POST":
+        if not can_edit_day:
+            flash(
+                "انتهت مهلة تعديل هذا التاريخ بعد مرور 48 ساعة. يلزم صلاحية الإدارة للتعديل.",
+                "danger",
+            )
+            return redirect(url_for("accounting_daily", kind=kind, date=day_date))
+
         cash_start = _to_float(request.form.get("cash_start"), 0)
         cash_end = _to_float(request.form.get("cash_end"), 0)
         cash_received = _to_float(request.form.get("cash_received"), 0)
@@ -1383,6 +1481,10 @@ def accounting_daily(kind):
         gen=gen,
         petty=petty,
         totals=totals,
+        can_edit_day=can_edit_day,
+        has_after_48h_override=has_after_48h_override,
+        edit_deadline=edit_deadline,
+        can_finance_approve=can_finance_approve,
     )
 
 
@@ -1398,8 +1500,12 @@ def accounting_movements(kind):
 
     date_from = (request.args.get("from") or "").strip() or date.today().isoformat()
     date_to = (request.args.get("to") or "").strip() or date.today().isoformat()
+    approval_filter = (request.args.get("approval") or "").strip()
 
-    headers = db.execute("""
+    if approval_filter not in ("settled", "rejected"):
+        approval_filter = ""
+
+    sql = """
         SELECT id,
                day_date,
                cash_start,
@@ -1407,12 +1513,21 @@ def accounting_movements(kind):
                cash_received,
                mada,
                bank_transfers,
-               total_in_enjaz
+               total_in_enjaz,
+               financial_approval_status
           FROM daily_header
          WHERE es=?
            AND day_date BETWEEN ? AND ?
-         ORDER BY day_date DESC
-    """, (kind, date_from, date_to)).fetchall()
+    """
+    params = [kind, date_from, date_to]
+
+    if approval_filter:
+        sql += " AND financial_approval_status=?"
+        params.append(approval_filter)
+
+    sql += " ORDER BY day_date DESC"
+
+    headers = db.execute(sql, params).fetchall()
 
     rows = []
 
@@ -1506,6 +1621,7 @@ def accounting_movements(kind):
             "total_in_enjaz": total_in_enjaz,
             "total_overall": total_overall,
             "error": err_val,
+            "financial_approval_status": (h["financial_approval_status"] or "").strip(),
         })
 
         overall_inputs += total_inputs
@@ -1554,6 +1670,7 @@ def accounting_movements(kind):
         kind=kind,
         date_from=date_from,
         date_to=date_to,
+        approval_filter=approval_filter,
         rows=rows,
         overall=overall,
     )
