@@ -82,6 +82,40 @@
       width: 100%;
     }
 
+
+    .sidebar-nav.cards .menu-card-accounting-alert {
+      grid-column: 1 / -1;
+      width: 100%;
+      background: #b42323;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      position: relative;
+    }
+
+    .sidebar-nav.cards .menu-card-accounting-alert:hover,
+    .sidebar-nav.cards .menu-card-accounting-alert.active {
+      background: #d12a2a;
+      color: #fff;
+    }
+
+    .sidebar-alert-count {
+      min-width: 28px;
+      height: 28px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: #fff;
+      color: #b42323;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      line-height: 1;
+      box-shadow: 0 1px 4px rgba(0,0,0,.22);
+    }
+
     @media (max-width: 767.98px) {
       .sidebar-brand-logo {
         width: 205px;
@@ -248,6 +282,19 @@
             class="menu-card menu-card-wide {% if request.path.startswith('/dashboard') %}active{% endif %}"
           >
             📊 لوحة المتابعة
+          </a>
+
+        {% endif %}
+
+
+        {% if accounting_alert_count|default(0) > 0 and (session.get('username') == 'adm-es' or perms.get('accounting_rejection_alerts')) %}
+
+          <a
+            href="{{ url_for('accounting_rejection_alerts') }}"
+            class="menu-card menu-card-accounting-alert {% if request.path.startswith('/accounting/rejection-alerts') %}active{% endif %}"
+          >
+            <span>🔔 تنبيهات المحاسبة</span>
+            <span class="sidebar-alert-count">{{ accounting_alert_count }}</span>
           </a>
 
         {% endif %}

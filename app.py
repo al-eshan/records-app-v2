@@ -77,6 +77,7 @@ PERM_KEYS = [
     "dashboard",
     "accounting_edit_after_48h",
     "financial_admin_approval",
+    "accounting_rejection_alerts",
     "permissions",
 ]
 
@@ -104,6 +105,7 @@ PERM_LABELS = {
     "dashboard": "لوحة المتابعة",
     "accounting_edit_after_48h": "تعديل المحاسبة اليومية بعد 48 ساعة",
     "financial_admin_approval": "اعتماد الإدارة المالية",
+    "accounting_rejection_alerts": "عرض تنبيهات المحاسبة المرفوضة",
     "permissions": "الصلاحيات",
 }
 
@@ -739,6 +741,97 @@ def status_color(expiry):
     return "bg-red"
 
 
+
+def _allowed_alert_kinds(perms=None):
+    """Accounting branches whose rejected alerts the current user may see."""
+    if session.get("username") == MASTER_USERNAME:
+        return ["ES1", "ES2", "ES3"]
+
+    perms = perms or (session.get("perms") or {})
+    if not bool(perms.get("accounting_rejection_alerts")):
+        return []
+
+    return [
+        kind for kind in ("ES1", "ES2", "ES3")
+        if bool(perms.get(f"accounting_{kind.lower()}"))
+    ]
+
+
+def _accounting_alert_rows(limit=None):
+    """Return currently rejected accounting days visible to this user."""
+    if not session.get("logged_in"):
+        return []
+
+    perms = session.get("perms") or {}
+    if session.get("username") != MASTER_USERNAME and not bool(perms.get("accounting_rejection_alerts")):
+        return []
+
+    kinds = _allowed_alert_kinds(perms)
+    if not kinds:
+        return []
+
+    try:
+        db = get_db()
+        ensure_daily_accounting_schema(db)
+
+        placeholders = ",".join(["?"] * len(kinds))
+        sql = f"""
+            SELECT id,
+                   es,
+                   day_date,
+                   financial_approval_status,
+                   financial_approval_updated_at,
+                   financial_approval_by
+              FROM daily_header
+             WHERE financial_approval_status='rejected'
+               AND es IN ({placeholders})
+             ORDER BY COALESCE(financial_approval_updated_at, day_date) DESC,
+                      day_date DESC,
+                      es ASC
+        """
+        params = list(kinds)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+
+        rows = db.execute(sql, params).fetchall()
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        result = []
+
+        for r in rows:
+            updated_at = (r["financial_approval_updated_at"] or "").strip()
+            age_hours = None
+            if updated_at:
+                try:
+                    dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                    if dt.tzinfo is not None:
+                        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                    age_hours = max(0, int((now_utc - dt).total_seconds() // 3600))
+                except Exception:
+                    age_hours = None
+
+            result.append({
+                "id": r["id"],
+                "es": r["es"],
+                "day_date": r["day_date"],
+                "financial_approval_updated_at": updated_at,
+                "financial_approval_by": (r["financial_approval_by"] or "").strip(),
+                "age_hours": age_hours,
+            })
+
+        return result
+    except Exception as exc:
+        print("accounting alerts error:", exc)
+        return []
+
+
+def _accounting_alert_context():
+    rows = _accounting_alert_rows()
+    return {
+        "accounting_alert_count": len(rows),
+    }
+
+
 @app.context_processor
 def inject_helpers():
     return {
@@ -747,6 +840,7 @@ def inject_helpers():
         "status_color": status_color,
         "perm_labels": PERM_LABELS,
         "perm_keys": PERM_KEYS,
+        **_accounting_alert_context(),
     }
 
 
@@ -820,6 +914,25 @@ def home():
 @permission_required("dashboard")
 def dashboard():
     return render_template("dashboard.html")
+
+
+# =========================
+# Accounting rejection alerts
+# =========================
+@app.route("/accounting/rejection-alerts")
+@login_required
+def accounting_rejection_alerts():
+    perms = session.get("perms") or {}
+    is_master = session.get("username") == MASTER_USERNAME
+
+    if not is_master and not bool(perms.get("accounting_rejection_alerts")):
+        return render_template("no_permission.html"), 403
+
+    alerts = _accounting_alert_rows()
+    return render_template(
+        "accounting_rejection_alerts.html",
+        alerts=alerts,
+    )
 
 
 # =========================

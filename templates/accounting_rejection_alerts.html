@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  .alerts-page {
+    max-width: 1150px;
+    margin: 0 auto;
+  }
+
+  .alerts-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+
+  .alerts-title {
+    margin: 0;
+    font-weight: 800;
+  }
+
+  .alerts-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 42px;
+    height: 42px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: #b42323;
+    color: #fff;
+    font-weight: 800;
+  }
+
+  .alert-accounting-card {
+    border: 1px solid rgba(220, 53, 69, .35);
+    border-right: 6px solid #dc3545;
+    border-radius: 14px;
+    background: rgba(220, 53, 69, .07);
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+
+  .alert-accounting-main {
+    display: grid;
+    grid-template-columns: minmax(100px, .7fr) minmax(150px, 1fr) minmax(220px, 1.5fr) auto;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .alert-label {
+    color: #dc3545;
+    font-weight: 800;
+  }
+
+  .age-badge {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: .86rem;
+    font-weight: 700;
+    background: rgba(220, 53, 69, .14);
+    color: #dc3545;
+  }
+
+  .age-badge.urgent {
+    background: #dc3545;
+    color: #fff;
+  }
+
+  .empty-alerts {
+    text-align: center;
+    padding: 48px 18px;
+    border-radius: 16px;
+    background: rgba(25, 135, 84, .1);
+  }
+
+  @media (max-width: 767.98px) {
+    .alert-accounting-main {
+      grid-template-columns: 1fr;
+    }
+
+    .alert-accounting-main .btn {
+      width: 100%;
+    }
+  }
+</style>
+
+<div class="content-card alerts-page">
+  <div class="alerts-head">
+    <div>
+      <h4 class="alerts-title">🔔 تنبيهات المحاسبة</h4>
+      <div class="text-muted mt-1">الحسابات المرفوضة التي ما زالت تحت المعالجة</div>
+    </div>
+
+    {% if alerts %}
+      <span class="alerts-count">{{ alerts|length }}</span>
+    {% endif %}
+  </div>
+
+  {% if alerts %}
+    {% for a in alerts %}
+      <div class="alert-accounting-card">
+        <div class="alert-accounting-main">
+          <div>
+            <div class="small text-muted">الفرع</div>
+            <strong>{{ a.es }}</strong>
+          </div>
+
+          <div>
+            <div class="small text-muted">التاريخ</div>
+            <strong>{{ a.day_date }}</strong>
+          </div>
+
+          <div>
+            <div class="alert-label">مرفوض وتحت المعالجة</div>
+            <div class="mt-2">
+              {% if a.age_hours is not none %}
+                {% if a.age_hours >= 48 %}
+                  <span class="age-badge urgent">معلق منذ {{ (a.age_hours // 24) }} يوم</span>
+                {% elif a.age_hours >= 24 %}
+                  <span class="age-badge">معلق منذ يوم</span>
+                {% elif a.age_hours > 0 %}
+                  <span class="age-badge">معلق منذ {{ a.age_hours }} ساعة</span>
+                {% else %}
+                  <span class="age-badge">مرفوض حديثًا</span>
+                {% endif %}
+              {% endif %}
+
+              {% if a.financial_approval_by %}
+                <span class="small text-muted me-2">بواسطة: {{ a.financial_approval_by }}</span>
+              {% endif %}
+            </div>
+          </div>
+
+          <div>
+            <a
+              class="btn btn-danger"
+              href="{{ url_for('accounting_daily', kind=a.es, date=a.day_date) }}"
+            >
+              فتح الحساب
+            </a>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty-alerts">
+      <div class="fs-2 mb-2">✅</div>
+      <strong>لا توجد حسابات مرفوضة حاليًا</strong>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
