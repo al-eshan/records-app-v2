@@ -83,6 +83,19 @@
     }
 
 
+    .sidebar-nav.cards .menu-card-whatsapp {
+      grid-column: 1 / -1;
+      width: 100%;
+      background: #15803d;
+      color: #fff;
+    }
+
+    .sidebar-nav.cards .menu-card-whatsapp:hover,
+    .sidebar-nav.cards .menu-card-whatsapp.active {
+      background: #16a34a;
+      color: #fff;
+    }
+
     .sidebar-nav.cards .menu-card-accounting-alert {
       grid-column: 1 / -1;
       width: 100%;
@@ -282,6 +295,18 @@
             class="menu-card menu-card-wide {% if request.path.startswith('/dashboard') %}active{% endif %}"
           >
             📊 لوحة المتابعة
+          </a>
+
+        {% endif %}
+
+
+        {% if session.get('username') == 'adm-es' or perms.get('whatsapp_branches') %}
+
+          <a
+            href="{{ url_for('whatsapp_branches') }}"
+            class="menu-card menu-card-whatsapp {% if request.path.startswith('/whatsapp') %}active{% endif %}"
+          >
+            💬 واتساب الفروع
           </a>
 
         {% endif %}

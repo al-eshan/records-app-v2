@@ -78,6 +78,8 @@ PERM_KEYS = [
     "accounting_edit_after_48h",
     "financial_admin_approval",
     "accounting_rejection_alerts",
+    "whatsapp_branches",
+    "whatsapp_numbers_manage",
     "permissions",
 ]
 
@@ -106,6 +108,8 @@ PERM_LABELS = {
     "accounting_edit_after_48h": "تعديل المحاسبة اليومية بعد 48 ساعة",
     "financial_admin_approval": "اعتماد الإدارة المالية",
     "accounting_rejection_alerts": "عرض تنبيهات المحاسبة المرفوضة",
+    "whatsapp_branches": "واتساب الفروع",
+    "whatsapp_numbers_manage": "إدارة أرقام واتساب",
     "permissions": "الصلاحيات",
 }
 
@@ -636,6 +640,79 @@ def ws_replace_all(tab_name: str, headers: list, rows: list):
 
 
 # =========================
+# WhatsApp branches / unified inbox
+# =========================
+def ensure_whatsapp_schema(db):
+    """Create local WhatsApp inbox tables. Meta/Webhook integration can populate them later."""
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS wa_numbers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            label TEXT NOT NULL,
+            branch_code TEXT,
+            phone_number TEXT,
+            meta_phone_number_id TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT
+        )
+    """)
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS wa_conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wa_number_id INTEGER NOT NULL,
+            contact_wa_id TEXT,
+            contact_name TEXT,
+            last_message TEXT,
+            last_message_at TEXT,
+            unread_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT,
+            FOREIGN KEY (wa_number_id) REFERENCES wa_numbers(id)
+        )
+    """)
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS wa_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL,
+            meta_message_id TEXT,
+            direction TEXT NOT NULL DEFAULT 'in',
+            message_type TEXT NOT NULL DEFAULT 'text',
+            body TEXT,
+            media_url TEXT,
+            sent_at TEXT,
+            status TEXT,
+            created_at TEXT,
+            FOREIGN KEY (conversation_id) REFERENCES wa_conversations(id)
+        )
+    """)
+
+    db.execute("CREATE INDEX IF NOT EXISTS idx_wa_conversations_number ON wa_conversations(wa_number_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_wa_messages_conversation ON wa_messages(conversation_id)")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_messages_meta_id ON wa_messages(meta_message_id) WHERE meta_message_id IS NOT NULL")
+
+    count = db.execute("SELECT COUNT(*) AS c FROM wa_numbers").fetchone()["c"]
+    if int(count or 0) == 0:
+        now = datetime.now().isoformat(timespec="seconds")
+        defaults = [
+            ("ES1", "ES1", 1),
+            ("ES2", "ES2", 2),
+            ("ES3", "ES3", 3),
+            ("الإدارة", "ADMIN", 4),
+            ("الرقم الخامس", "WA5", 5),
+        ]
+        db.executemany(
+            """
+            INSERT INTO wa_numbers (label, branch_code, sort_order, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            [(label, code, order_no, now) for label, code, order_no in defaults],
+        )
+
+    db.commit()
+
+
+# =========================
 # Debug routes (مؤقتة للتشخيص)
 # =========================
 @app.route("/debug/env", methods=["GET"])
@@ -903,6 +980,177 @@ def home():
     return render_template(
         "home.html",
         slides=slides
+    )
+
+
+# =========================
+# WhatsApp branches - unified inbox
+# =========================
+@app.route("/whatsapp")
+@login_required
+def whatsapp_branches():
+    perms = session.get("perms") or {}
+    is_master = session.get("username") == MASTER_USERNAME
+    if not is_master and not bool(perms.get("whatsapp_branches")):
+        return render_template("no_permission.html"), 403
+
+    db = get_db()
+    ensure_whatsapp_schema(db)
+
+    selected_number = (request.args.get("number") or "all").strip()
+    search_text = (request.args.get("q") or "").strip()
+    conversation_id = (request.args.get("conversation") or "").strip()
+
+    numbers = db.execute("""
+        SELECT id, label, branch_code, phone_number, meta_phone_number_id, is_active, sort_order
+        FROM wa_numbers
+        WHERE is_active = 1
+        ORDER BY sort_order ASC, id ASC
+    """).fetchall()
+
+    where = ["1=1"]
+    params = []
+    if selected_number != "all":
+        try:
+            where.append("c.wa_number_id=?")
+            params.append(int(selected_number))
+        except ValueError:
+            selected_number = "all"
+
+    if search_text:
+        where.append("(COALESCE(c.contact_name,'') LIKE ? OR COALESCE(c.contact_wa_id,'') LIKE ? OR COALESCE(c.last_message,'') LIKE ?)")
+        term = f"%{search_text}%"
+        params.extend([term, term, term])
+
+    conversations = db.execute(f"""
+        SELECT c.id,
+               c.wa_number_id,
+               c.contact_wa_id,
+               c.contact_name,
+               c.last_message,
+               c.last_message_at,
+               c.unread_count,
+               n.label AS number_label,
+               n.branch_code
+        FROM wa_conversations c
+        JOIN wa_numbers n ON n.id=c.wa_number_id
+        WHERE {' AND '.join(where)}
+        ORDER BY COALESCE(c.last_message_at, c.updated_at) DESC, c.id DESC
+        LIMIT 300
+    """, params).fetchall()
+
+    active_conversation = None
+    messages = []
+    if conversation_id:
+        try:
+            cid = int(conversation_id)
+            active_conversation = db.execute("""
+                SELECT c.*, n.label AS number_label, n.branch_code
+                FROM wa_conversations c
+                JOIN wa_numbers n ON n.id=c.wa_number_id
+                WHERE c.id=?
+            """, (cid,)).fetchone()
+
+            if active_conversation:
+                messages = db.execute("""
+                    SELECT id, direction, message_type, body, media_url, sent_at, status
+                    FROM wa_messages
+                    WHERE conversation_id=?
+                    ORDER BY COALESCE(sent_at, created_at) ASC, id ASC
+                    LIMIT 1000
+                """, (cid,)).fetchall()
+        except ValueError:
+            pass
+
+    connected_count = sum(1 for n in numbers if (n["meta_phone_number_id"] or "").strip())
+    total_unread = sum(int(c["unread_count"] or 0) for c in conversations)
+
+    return render_template(
+        "whatsapp_branches.html",
+        numbers=numbers,
+        conversations=conversations,
+        active_conversation=active_conversation,
+        messages=messages,
+        selected_number=selected_number,
+        search_text=search_text,
+        connected_count=connected_count,
+        total_unread=total_unread,
+        can_manage_numbers=(is_master or bool(perms.get("whatsapp_numbers_manage"))),
+    )
+
+
+@app.route("/whatsapp/numbers", methods=["GET", "POST"])
+@login_required
+def whatsapp_numbers_manage():
+    perms = session.get("perms") or {}
+    is_master = session.get("username") == MASTER_USERNAME
+    if not is_master and not bool(perms.get("whatsapp_numbers_manage")):
+        return render_template("no_permission.html"), 403
+
+    db = get_db()
+    ensure_whatsapp_schema(db)
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip()
+
+        if action == "update_number":
+            try:
+                number_id = int(request.form.get("number_id", "0") or 0)
+            except ValueError:
+                number_id = 0
+
+            row = db.execute(
+                "SELECT id FROM wa_numbers WHERE id=?",
+                (number_id,),
+            ).fetchone()
+            if not row:
+                flash("رقم واتساب غير موجود", "danger")
+                return redirect(url_for("whatsapp_numbers_manage"))
+
+            label = (request.form.get("label") or "").strip()
+            branch_code = (request.form.get("branch_code") or "").strip()
+            phone_number = (request.form.get("phone_number") or "").strip()
+
+            if not label:
+                flash("اسم الرقم مطلوب", "warning")
+                return redirect(url_for("whatsapp_numbers_manage"))
+
+            try:
+                sort_order = int(request.form.get("sort_order", "0") or 0)
+            except ValueError:
+                sort_order = 0
+            sort_order = max(0, min(sort_order, 9999))
+
+            is_active = 1 if request.form.get("is_active") == "on" else 0
+
+            db.execute(
+                """
+                UPDATE wa_numbers
+                   SET label=?,
+                       branch_code=?,
+                       phone_number=?,
+                       sort_order=?,
+                       is_active=?
+                 WHERE id=?
+                """,
+                (label, branch_code, phone_number, sort_order, is_active, number_id),
+            )
+            db.commit()
+            flash(f"تم تحديث {label} بنجاح", "success")
+            return redirect(url_for("whatsapp_numbers_manage"))
+
+    numbers = db.execute(
+        """
+        SELECT id, label, branch_code, phone_number, meta_phone_number_id,
+               is_active, sort_order, created_at
+          FROM wa_numbers
+         ORDER BY sort_order ASC, id ASC
+        """
+    ).fetchall()
+
+    return render_template(
+        "whatsapp_numbers_manage.html",
+        numbers=numbers,
     )
 
 

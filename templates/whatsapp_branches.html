@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .wa-page { direction: rtl; }
+  .wa-topbar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+  .wa-title { font-weight:800; margin:0; }
+  .wa-summary { display:flex; gap:8px; flex-wrap:wrap; }
+  .wa-summary .badge-box { background:#f3f4f6; border:1px solid #e5e7eb; border-radius:10px; padding:8px 12px; font-weight:700; }
+  .wa-connect-note { background:#ecfdf5; border:1px solid #a7f3d0; color:#166534; border-radius:12px; padding:11px 14px; margin-bottom:14px; }
+  .wa-number-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .wa-number-tabs a { text-decoration:none; border:1px solid #d1d5db; background:#fff; color:#1f2937; border-radius:10px; padding:8px 14px; font-weight:700; }
+  .wa-number-tabs a.active { background:#15803d; border-color:#15803d; color:#fff; }
+  .wa-number-tabs .status-dot { width:8px; height:8px; display:inline-block; border-radius:50%; margin-left:5px; background:#cbd5e1; }
+  .wa-number-tabs .status-dot.connected { background:#22c55e; }
+  .wa-shell { display:grid; grid-template-columns:minmax(280px, 36%) 1fr; min-height:650px; border:1px solid #e5e7eb; border-radius:16px; overflow:hidden; background:#fff; }
+  .wa-list { border-left:1px solid #e5e7eb; background:#f8fafc; }
+  .wa-search { padding:12px; border-bottom:1px solid #e5e7eb; }
+  .wa-search form { display:flex; gap:8px; }
+  .wa-search input { flex:1; }
+  .wa-conversation { display:block; text-decoration:none; color:inherit; padding:13px 14px; border-bottom:1px solid #e5e7eb; background:#fff; }
+  .wa-conversation:hover, .wa-conversation.active { background:#ecfdf5; }
+  .wa-conv-head { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+  .wa-name { font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .wa-branch { font-size:.75rem; border-radius:999px; padding:3px 8px; background:#e5e7eb; }
+  .wa-preview { color:#6b7280; font-size:.9rem; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .wa-unread { min-width:24px; height:24px; border-radius:999px; background:#16a34a; color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:.75rem; font-weight:800; }
+  .wa-empty-list { padding:28px 18px; text-align:center; color:#6b7280; }
+  .wa-chat { display:flex; flex-direction:column; min-width:0; background:#f0f2f5; }
+  .wa-chat-header { background:#fff; border-bottom:1px solid #e5e7eb; padding:13px 16px; min-height:66px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .wa-chat-body { flex:1; overflow:auto; padding:20px; background:#efeae2; }
+  .wa-chat-placeholder { height:100%; min-height:540px; display:flex; align-items:center; justify-content:center; text-align:center; color:#6b7280; padding:20px; }
+  .wa-bubble { max-width:76%; padding:9px 12px; border-radius:12px; margin-bottom:8px; box-shadow:0 1px 1px rgba(0,0,0,.06); }
+  .wa-bubble.in { margin-left:auto; background:#fff; }
+  .wa-bubble.out { margin-right:auto; background:#d9fdd3; }
+  .wa-msg-time { display:block; margin-top:4px; color:#6b7280; font-size:.72rem; }
+  .wa-readonly { background:#fff; border-top:1px solid #e5e7eb; padding:12px 16px; color:#6b7280; font-size:.9rem; text-align:center; }
+  @media (max-width: 900px) {
+    .wa-shell { grid-template-columns:1fr; }
+    .wa-list { border-left:0; border-bottom:1px solid #e5e7eb; max-height:340px; overflow:auto; }
+    .wa-chat-placeholder { min-height:360px; }
+  }
+</style>
+
+<div class="content-card wa-page">
+  <div class="wa-topbar">
+    <div>
+      <h4 class="wa-title">💬 واتساب الفروع</h4>
+      <div class="text-muted small mt-1">صندوق موحد لمتابعة أرقام واتساب الأعمال</div>
+    </div>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      {% if can_manage_numbers %}
+        <a href="{{ url_for('whatsapp_numbers_manage') }}" class="btn btn-outline-success fw-bold">
+          ⚙️ إدارة أرقام واتساب
+        </a>
+      {% endif %}
+      <div class="wa-summary">
+        <span class="badge-box">الأرقام: {{ numbers|length }}</span>
+        <span class="badge-box">المربوط: {{ connected_count }}</span>
+        <span class="badge-box">غير المقروء: {{ total_unread }}</span>
+      </div>
+    </div>
+  </div>
+
+  {% if connected_count == 0 %}
+    <div class="wa-connect-note">
+      الواجهة جاهزة. لم يتم ربط أرقام WhatsApp Business Platform حتى الآن، لذلك لن تظهر المحادثات قبل تفعيل الربط الرسمي مع Meta.
+    </div>
+  {% endif %}
+
+  <div class="wa-number-tabs">
+    <a href="{{ url_for('whatsapp_branches', number='all', q=search_text) }}" class="{% if selected_number == 'all' %}active{% endif %}">الكل</a>
+    {% for n in numbers %}
+      <a href="{{ url_for('whatsapp_branches', number=n['id'], q=search_text) }}" class="{% if selected_number|string == n['id']|string %}active{% endif %}">
+        <span class="status-dot {% if n['meta_phone_number_id'] %}connected{% endif %}"></span>{{ n['label'] }}
+      </a>
+    {% endfor %}
+  </div>
+
+  <div class="wa-shell">
+    <section class="wa-list">
+      <div class="wa-search">
+        <form method="get" action="{{ url_for('whatsapp_branches') }}">
+          <input type="hidden" name="number" value="{{ selected_number }}">
+          <input class="form-control" type="search" name="q" value="{{ search_text }}" placeholder="بحث بالاسم أو الرقم أو الرسالة...">
+          <button class="btn btn-success" type="submit">بحث</button>
+        </form>
+      </div>
+
+      {% if conversations %}
+        {% for c in conversations %}
+          <a class="wa-conversation {% if active_conversation and active_conversation['id'] == c['id'] %}active{% endif %}"
+             href="{{ url_for('whatsapp_branches', number=selected_number, q=search_text, conversation=c['id']) }}">
+            <div class="wa-conv-head">
+              <div class="wa-name">{{ c['contact_name'] or c['contact_wa_id'] or 'عميل بدون اسم' }}</div>
+              <span class="wa-branch">{{ c['number_label'] }}</span>
+            </div>
+            <div class="d-flex justify-content-between align-items-center gap-2 mt-1">
+              <div class="wa-preview">{{ c['last_message'] or 'لا توجد معاينة' }}</div>
+              {% if c['unread_count'] %}<span class="wa-unread">{{ c['unread_count'] }}</span>{% endif %}
+            </div>
+          </a>
+        {% endfor %}
+      {% else %}
+        <div class="wa-empty-list">
+          <div style="font-size:2rem">💬</div>
+          <strong>لا توجد محادثات بعد</strong>
+          <div class="small mt-2">ستظهر المحادثات هنا تلقائيًا بعد ربط الأرقام واستقبال الرسائل.</div>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="wa-chat">
+      {% if active_conversation %}
+        <div class="wa-chat-header">
+          <div>
+            <div class="fw-bold">{{ active_conversation['contact_name'] or active_conversation['contact_wa_id'] or 'عميل بدون اسم' }}</div>
+            <div class="small text-muted">{{ active_conversation['contact_wa_id'] or '' }}</div>
+          </div>
+          <span class="badge bg-success">{{ active_conversation['number_label'] }}</span>
+        </div>
+        <div class="wa-chat-body">
+          {% for m in messages %}
+            <div class="wa-bubble {{ 'out' if m['direction'] == 'out' else 'in' }}">
+              {% if m['message_type'] != 'text' %}<div class="small text-muted mb-1">{{ m['message_type'] }}</div>{% endif %}
+              <div>{{ m['body'] or 'مرفق/رسالة بدون نص' }}</div>
+              <span class="wa-msg-time">{{ m['sent_at'] or '' }}</span>
+            </div>
+          {% else %}
+            <div class="wa-chat-placeholder">لا توجد رسائل محفوظة لهذه المحادثة.</div>
+          {% endfor %}
+        </div>
+        <div class="wa-readonly">المرحلة الحالية للمتابعة والاطلاع فقط — الرد من الموقع سيُفعّل بعد ربط Meta.</div>
+      {% else %}
+        <div class="wa-chat-placeholder">
+          <div>
+            <div style="font-size:3rem">📱</div>
+            <h5 class="mt-2">اختر محادثة لعرضها</h5>
+            <div>سيظهر سجل الرسائل هنا بعد ربط الأرقام الخمسة رسميًا.</div>
+          </div>
+        </div>
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}
