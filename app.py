@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import os
 import json
+import hmac
+import hashlib
 import sqlite3
 import uuid
 import urllib.request
@@ -343,6 +345,7 @@ def _ensure_bootstrap():
         ensure_debts_ledger_schema(db)
         ensure_important_links_schema(db)
         ensure_home_slides_schema(db)
+        ensure_whatsapp_schema(db)
 
         ensure_master_user()
 
@@ -687,7 +690,17 @@ def ensure_whatsapp_schema(db):
         )
     """)
 
+    # Safe migrations for WhatsApp integration fields
+    number_cols = [r[1] for r in db.execute("PRAGMA table_info(wa_numbers)").fetchall()]
+    if "meta_phone_number_id" not in number_cols:
+        db.execute("ALTER TABLE wa_numbers ADD COLUMN meta_phone_number_id TEXT")
+
+    message_cols = [r[1] for r in db.execute("PRAGMA table_info(wa_messages)").fetchall()]
+    if "meta_media_id" not in message_cols:
+        db.execute("ALTER TABLE wa_messages ADD COLUMN meta_media_id TEXT")
+
     db.execute("CREATE INDEX IF NOT EXISTS idx_wa_conversations_number ON wa_conversations(wa_number_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_wa_conversations_contact ON wa_conversations(wa_number_id, contact_wa_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_wa_messages_conversation ON wa_messages(conversation_id)")
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_messages_meta_id ON wa_messages(meta_message_id) WHERE meta_message_id IS NOT NULL")
 
@@ -983,6 +996,330 @@ def home():
     )
 
 
+
+# =========================
+# WhatsApp Cloud API webhook
+# =========================
+def _wa_webhook_verify_token():
+    return (os.environ.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN") or "").strip()
+
+
+def _wa_meta_app_secret():
+    return (os.environ.get("WHATSAPP_META_APP_SECRET") or "").strip()
+
+
+def _wa_signature_valid(raw_body: bytes, signature_header: str) -> bool:
+    """Validate Meta X-Hub-Signature-256 using the app secret."""
+    secret = _wa_meta_app_secret()
+    if not secret or not signature_header:
+        return False
+
+    expected = "sha256=" + hmac.new(
+        secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, signature_header.strip())
+
+
+def _wa_message_summary(message: dict):
+    """Return (body, meta_media_id) for common WhatsApp message types."""
+    msg_type = (message.get("type") or "unknown").strip()
+    body = ""
+    media_id = None
+
+    if msg_type == "text":
+        body = ((message.get("text") or {}).get("body") or "").strip()
+
+    elif msg_type == "image":
+        data = message.get("image") or {}
+        media_id = data.get("id")
+        caption = (data.get("caption") or "").strip()
+        body = f"📷 صورة{': ' + caption if caption else ''}"
+
+    elif msg_type == "video":
+        data = message.get("video") or {}
+        media_id = data.get("id")
+        caption = (data.get("caption") or "").strip()
+        body = f"🎥 فيديو{': ' + caption if caption else ''}"
+
+    elif msg_type == "audio":
+        data = message.get("audio") or {}
+        media_id = data.get("id")
+        body = "🎵 رسالة صوتية"
+
+    elif msg_type == "document":
+        data = message.get("document") or {}
+        media_id = data.get("id")
+        filename = (data.get("filename") or "").strip()
+        caption = (data.get("caption") or "").strip()
+        tail = filename or caption
+        body = f"📄 مستند{': ' + tail if tail else ''}"
+
+    elif msg_type == "sticker":
+        data = message.get("sticker") or {}
+        media_id = data.get("id")
+        body = "🖼️ ملصق"
+
+    elif msg_type == "location":
+        data = message.get("location") or {}
+        name = (data.get("name") or "").strip()
+        address = (data.get("address") or "").strip()
+        lat = data.get("latitude")
+        lon = data.get("longitude")
+        body = "📍 موقع"
+        if name:
+            body += f": {name}"
+        elif address:
+            body += f": {address}"
+        elif lat is not None and lon is not None:
+            body += f": {lat}, {lon}"
+
+    elif msg_type == "button":
+        data = message.get("button") or {}
+        body = (data.get("text") or data.get("payload") or "🔘 زر").strip()
+
+    elif msg_type == "interactive":
+        data = message.get("interactive") or {}
+        button_reply = data.get("button_reply") or {}
+        list_reply = data.get("list_reply") or {}
+        body = (
+            button_reply.get("title")
+            or list_reply.get("title")
+            or list_reply.get("description")
+            or "↩️ رد تفاعلي"
+        )
+
+    elif msg_type == "reaction":
+        data = message.get("reaction") or {}
+        emoji = (data.get("emoji") or "").strip()
+        body = f"تفاعل {emoji}".strip()
+
+    elif msg_type == "contacts":
+        contacts = message.get("contacts") or []
+        if contacts:
+            name_data = contacts[0].get("name") or {}
+            body = f"👤 جهة اتصال: {name_data.get('formatted_name') or ''}".strip()
+        else:
+            body = "👤 جهة اتصال"
+
+    else:
+        body = f"رسالة من نوع {msg_type}"
+
+    return body or "رسالة واتساب", media_id
+
+
+def _wa_iso_from_unix(timestamp_value):
+    try:
+        return datetime.fromtimestamp(
+            int(timestamp_value),
+            tz=timezone.utc,
+        ).isoformat(timespec="seconds")
+    except Exception:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@app.route("/webhooks/whatsapp", methods=["GET", "POST"])
+def whatsapp_webhook():
+    """
+    GET  : Meta verification handshake.
+    POST : Receive WhatsApp Business Platform events.
+    """
+    if request.method == "GET":
+        mode = (request.args.get("hub.mode") or "").strip()
+        token = (request.args.get("hub.verify_token") or "").strip()
+        challenge = request.args.get("hub.challenge") or ""
+        expected_token = _wa_webhook_verify_token()
+
+        if expected_token and mode == "subscribe" and hmac.compare_digest(token, expected_token):
+            return challenge, 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+        return "Forbidden", 403
+
+    raw_body = request.get_data(cache=True)
+    signature = request.headers.get("X-Hub-Signature-256", "")
+
+    # Fail closed: production events are accepted only when the Meta signature is valid.
+    if not _wa_meta_app_secret():
+        print("WhatsApp webhook rejected: WHATSAPP_META_APP_SECRET is not configured")
+        return "Webhook app secret is not configured", 503
+
+    if not _wa_signature_valid(raw_body, signature):
+        print("WhatsApp webhook rejected: invalid Meta signature")
+        return "Invalid signature", 401
+
+    payload = request.get_json(silent=True) or {}
+    if payload.get("object") != "whatsapp_business_account":
+        return "EVENT_RECEIVED", 200
+
+    db = get_db()
+    ensure_whatsapp_schema(db)
+
+    try:
+        for entry in payload.get("entry") or []:
+            for change in entry.get("changes") or []:
+                if change.get("field") != "messages":
+                    continue
+
+                value = change.get("value") or {}
+                metadata = value.get("metadata") or {}
+                meta_phone_number_id = str(metadata.get("phone_number_id") or "").strip()
+
+                # Update delivery/read status for outgoing messages when Meta sends status events.
+                for status_item in value.get("statuses") or []:
+                    meta_message_id = str(status_item.get("id") or "").strip()
+                    status_name = str(status_item.get("status") or "").strip()
+                    if meta_message_id and status_name:
+                        db.execute(
+                            "UPDATE wa_messages SET status=? WHERE meta_message_id=?",
+                            (status_name, meta_message_id),
+                        )
+
+                incoming_messages = value.get("messages") or []
+                if not incoming_messages:
+                    continue
+
+                wa_number = db.execute(
+                    """
+                    SELECT id, label
+                    FROM wa_numbers
+                    WHERE meta_phone_number_id=? AND is_active=1
+                    LIMIT 1
+                    """,
+                    (meta_phone_number_id,),
+                ).fetchone()
+
+                if not wa_number:
+                    print(
+                        "WhatsApp webhook: no active wa_numbers row mapped to Meta phone_number_id",
+                        meta_phone_number_id,
+                    )
+                    continue
+
+                contact_names = {}
+                for contact in value.get("contacts") or []:
+                    wa_id = str(contact.get("wa_id") or "").strip()
+                    profile = contact.get("profile") or {}
+                    if wa_id:
+                        contact_names[wa_id] = (profile.get("name") or "").strip()
+
+                for message in incoming_messages:
+                    meta_message_id = str(message.get("id") or "").strip()
+
+                    # Meta may retry delivery. Do not insert the same message twice.
+                    if meta_message_id:
+                        exists = db.execute(
+                            "SELECT id FROM wa_messages WHERE meta_message_id=? LIMIT 1",
+                            (meta_message_id,),
+                        ).fetchone()
+                        if exists:
+                            continue
+
+                    contact_wa_id = str(message.get("from") or "").strip()
+                    if not contact_wa_id:
+                        continue
+
+                    contact_name = contact_names.get(contact_wa_id) or contact_wa_id
+                    msg_type = str(message.get("type") or "unknown").strip()
+                    body, meta_media_id = _wa_message_summary(message)
+                    sent_at = _wa_iso_from_unix(message.get("timestamp"))
+                    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+                    conversation = db.execute(
+                        """
+                        SELECT id
+                        FROM wa_conversations
+                        WHERE wa_number_id=? AND contact_wa_id=?
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                        (wa_number["id"], contact_wa_id),
+                    ).fetchone()
+
+                    if conversation:
+                        conversation_id = conversation["id"]
+                        db.execute(
+                            """
+                            UPDATE wa_conversations
+                               SET contact_name=?,
+                                   last_message=?,
+                                   last_message_at=?,
+                                   unread_count=COALESCE(unread_count, 0) + 1,
+                                   updated_at=?
+                             WHERE id=?
+                            """,
+                            (
+                                contact_name,
+                                body,
+                                sent_at,
+                                now_iso,
+                                conversation_id,
+                            ),
+                        )
+                    else:
+                        cur = db.execute(
+                            """
+                            INSERT INTO wa_conversations (
+                                wa_number_id,
+                                contact_wa_id,
+                                contact_name,
+                                last_message,
+                                last_message_at,
+                                unread_count,
+                                updated_at
+                            )
+                            VALUES (?, ?, ?, ?, ?, 1, ?)
+                            """,
+                            (
+                                wa_number["id"],
+                                contact_wa_id,
+                                contact_name,
+                                body,
+                                sent_at,
+                                now_iso,
+                            ),
+                        )
+                        conversation_id = cur.lastrowid
+
+                    db.execute(
+                        """
+                        INSERT INTO wa_messages (
+                            conversation_id,
+                            meta_message_id,
+                            direction,
+                            message_type,
+                            body,
+                            media_url,
+                            meta_media_id,
+                            sent_at,
+                            status,
+                            created_at
+                        )
+                        VALUES (?, ?, 'in', ?, ?, NULL, ?, ?, 'received', ?)
+                        """,
+                        (
+                            conversation_id,
+                            meta_message_id or None,
+                            msg_type,
+                            body,
+                            meta_media_id,
+                            sent_at,
+                            now_iso,
+                        ),
+                    )
+
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        print("WhatsApp webhook processing error:", repr(e))
+        # Non-2xx lets Meta retry the event.
+        return "Webhook processing failed", 500
+
+    return "EVENT_RECEIVED", 200
+
+
 # =========================
 # WhatsApp branches - unified inbox
 # =========================
@@ -1059,6 +1396,13 @@ def whatsapp_branches():
                     ORDER BY COALESCE(sent_at, created_at) ASC, id ASC
                     LIMIT 1000
                 """, (cid,)).fetchall()
+
+                # Opening the conversation marks its local unread counter as read.
+                db.execute(
+                    "UPDATE wa_conversations SET unread_count=0 WHERE id=?",
+                    (cid,),
+                )
+                db.commit()
         except ValueError:
             pass
 
@@ -1110,6 +1454,7 @@ def whatsapp_numbers_manage():
             label = (request.form.get("label") or "").strip()
             branch_code = (request.form.get("branch_code") or "").strip()
             phone_number = (request.form.get("phone_number") or "").strip()
+            meta_phone_number_id = (request.form.get("meta_phone_number_id") or "").strip()
 
             if not label:
                 flash("اسم الرقم مطلوب", "warning")
@@ -1129,11 +1474,20 @@ def whatsapp_numbers_manage():
                    SET label=?,
                        branch_code=?,
                        phone_number=?,
+                       meta_phone_number_id=?,
                        sort_order=?,
                        is_active=?
                  WHERE id=?
                 """,
-                (label, branch_code, phone_number, sort_order, is_active, number_id),
+                (
+                    label,
+                    branch_code,
+                    phone_number,
+                    meta_phone_number_id,
+                    sort_order,
+                    is_active,
+                    number_id,
+                ),
             )
             db.commit()
             flash(f"تم تحديث {label} بنجاح", "success")
@@ -1151,6 +1505,9 @@ def whatsapp_numbers_manage():
     return render_template(
         "whatsapp_numbers_manage.html",
         numbers=numbers,
+        webhook_callback_url=request.url_root.rstrip("/") + url_for("whatsapp_webhook"),
+        webhook_verify_token_is_set=bool(_wa_webhook_verify_token()),
+        webhook_app_secret_is_set=bool(_wa_meta_app_secret()),
     )
 
 

@@ -79,7 +79,7 @@
 
   .wa-grid {
     display:grid;
-    grid-template-columns:2fr 1fr 1.5fr .7fr;
+    grid-template-columns:1.7fr .9fr 1.35fr 1.4fr .6fr;
     gap:12px;
     align-items:end;
   }
@@ -162,6 +162,28 @@
     ربط الرقم مع Meta سيتم لاحقًا من خلال معرّف WhatsApp Business Platform.
   </div>
 
+  <div class="wa-number-card mb-3">
+    <div class="wa-number-card-head">
+      <strong>🔗 ربط Meta WhatsApp Business Platform</strong>
+      <span class="wa-status {{ 'on' if webhook_verify_token_is_set and webhook_app_secret_is_set else 'off' }}">
+        {{ 'جاهز من جهة الموقع' if webhook_verify_token_is_set and webhook_app_secret_is_set else 'يحتاج إعداد Render' }}
+      </span>
+    </div>
+    <div class="wa-number-card-body">
+      <div class="mb-2">
+        <label class="fw-bold mb-1">Callback URL</label>
+        <input type="text" class="form-control" dir="ltr" value="{{ webhook_callback_url }}" readonly onclick="this.select()">
+      </div>
+      <div class="small text-muted">
+        في Render أضف المتغيرين:
+        <code>WHATSAPP_WEBHOOK_VERIFY_TOKEN</code>
+        و
+        <code>WHATSAPP_META_APP_SECRET</code>.
+        لا تضع App Secret داخل الكود.
+      </div>
+    </div>
+  </div>
+
   {% for n in numbers %}
     <div class="wa-number-card" id="card-{{ n['id'] }}">
       <div class="wa-number-card-head">
@@ -229,6 +251,20 @@
           </div>
 
           <div class="wa-field">
+            <label>Meta Phone Number ID</label>
+            <input
+              type="text"
+              class="form-control wa-edit-field"
+              name="meta_phone_number_id"
+              value="{{ n['meta_phone_number_id'] or '' }}"
+              maxlength="100"
+              dir="ltr"
+              placeholder="مثال: 123456789012345"
+              readonly
+            >
+          </div>
+
+          <div class="wa-field">
             <label>الترتيب</label>
             <input
               type="number"
@@ -261,11 +297,11 @@
 
             {% if n['meta_phone_number_id'] %}
               <div class="wa-meta mt-1">
-                مربوط مع Meta: {{ n['meta_phone_number_id'] }}
+                مربوط مع Meta — Phone Number ID: {{ n['meta_phone_number_id'] }}
               </div>
             {% else %}
               <div class="wa-meta mt-1">
-                غير مربوط مع Meta حتى الآن
+                غير مربوط مع Meta — أدخل Meta Phone Number ID عند التعديل
               </div>
             {% endif %}
           </div>
