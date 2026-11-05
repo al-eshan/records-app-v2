@@ -1,346 +1,264 @@
 {% extends "base.html" %}
 {% block content %}
 <style>
-  .wa-manage-page { direction: rtl; }
+  .wa-manage-page{ direction:rtl; width:100%; }
 
-  .wa-manage-head {
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    gap:12px;
-    flex-wrap:wrap;
-    margin-bottom:16px;
-  }
+  .wa-manage-page .page-titlebar{ text-align:right; }
+  .wa-manage-page .page-titlebar .text-muted{ color:rgba(255,255,255,.72)!important; }
 
-  .wa-manage-title {
-    margin:0;
-    font-weight:800;
-  }
-
-  .wa-manage-note {
-    background:#eff6ff;
-    border:1px solid #bfdbfe;
-    color:#1e3a8a;
-    border-radius:12px;
-    padding:11px 14px;
-    margin-bottom:16px;
-  }
-
-  .wa-number-card {
-    border:1px solid #e5e7eb;
-    border-radius:14px;
-    background:#fff;
+  .wa-section{
+    border:1px solid var(--glass-border);
+    border-radius:16px;
+    background:var(--glass);
+    box-shadow:var(--glass-shadow);
+    backdrop-filter:blur(8px);
     overflow:hidden;
-    margin-bottom:14px;
+    margin-bottom:16px;
+    text-align:right;
   }
 
-  .wa-number-card.editing {
-    border-color:#86b7fe;
-    box-shadow:0 0 0 3px rgba(13,110,253,.08);
+  .wa-section.editing{
+    border-color:rgba(30,107,255,.55);
+    box-shadow:0 0 0 .2rem rgba(30,107,255,.12), var(--glass-shadow);
   }
 
-  .wa-number-card-head {
+  .wa-section-head{
     display:flex;
     justify-content:space-between;
     align-items:center;
     gap:10px;
-    padding:12px 16px;
-    background:#f8fafc;
-    border-bottom:1px solid #e5e7eb;
+    flex-wrap:wrap;
+    padding:11px 14px;
+    background:var(--thead-bg);
+    color:#fff;
+    border-bottom:1px solid var(--thead-border);
   }
 
-  .wa-number-card-head strong {
-    font-size:1.05rem;
-  }
+  .wa-section-head strong{ font-size:1rem; }
+  .wa-section-head .text-muted{ color:rgba(255,255,255,.72)!important; }
+  .wa-section-body{ padding:14px; color:#fff; }
+  .wa-section-body .text-muted{ color:rgba(255,255,255,.68)!important; }
+  .wa-section-body code{ color:#fff; }
 
-  .wa-status {
+  .wa-status{
     display:inline-flex;
     align-items:center;
     gap:6px;
-    font-size:.85rem;
-    font-weight:700;
+    font-size:.78rem;
+    font-weight:800;
     padding:5px 9px;
     border-radius:999px;
+    border:1px solid rgba(255,255,255,.10);
   }
+  .wa-status.on{ background:rgba(25,135,84,.28); color:#b9f3cf; }
+  .wa-status.off{ background:rgba(220,53,69,.24); color:#ffc2c8; }
 
-  .wa-status.on {
-    background:#dcfce7;
-    color:#166534;
-  }
-
-  .wa-status.off {
-    background:#fee2e2;
-    color:#991b1b;
-  }
-
-  .wa-number-card-body {
-    padding:16px;
-  }
-
-  .wa-grid {
+  .wa-grid{
     display:grid;
     grid-template-columns:1.7fr .9fr 1.35fr 1.4fr .6fr;
     gap:12px;
     align-items:end;
   }
-
-  .wa-field label {
+  .wa-field label{
     display:block;
-    font-weight:700;
-    margin-bottom:5px;
+    font-weight:800;
+    margin-bottom:6px;
+    color:#fff;
   }
-
-  .wa-field .form-control[readonly] {
-    background:#f8fafc;
-    color:#495057;
+  .wa-field .form-control[readonly]{
+    background:rgba(255,255,255,.06)!important;
+    color:rgba(255,255,255,.82)!important;
     cursor:default;
   }
 
-  .wa-actions {
+  .wa-actions{
     display:flex;
     align-items:center;
     justify-content:space-between;
     gap:12px;
     margin-top:14px;
     padding-top:14px;
-    border-top:1px solid #f1f5f9;
+    border-top:1px solid var(--glass-border);
   }
+  .wa-switch-wrap{ display:flex; align-items:center; gap:8px; font-weight:800; }
+  .wa-meta{ font-size:.8rem; color:rgba(255,255,255,.68); }
+  .wa-edit-actions{ display:flex; gap:8px; flex-wrap:wrap; }
 
-  .wa-switch-wrap {
-    display:flex;
-    align-items:center;
-    gap:8px;
-    font-weight:700;
+  .wa-user-card{
+    border:1px solid var(--glass-border);
+    border-radius:14px;
+    padding:12px;
+    margin-bottom:12px;
+    background:rgba(255,255,255,.03);
+    color:#fff;
   }
+  .wa-user-card .table{ margin-bottom:10px; }
+  .wa-user-card .text-muted{ color:rgba(255,255,255,.68)!important; }
 
-  .wa-meta {
-    font-size:.8rem;
-    color:#6b7280;
+  @media (max-width:900px){
+    .wa-grid{ grid-template-columns:1fr 1fr; }
   }
-
-  .wa-edit-actions {
-    display:flex;
-    gap:8px;
-    flex-wrap:wrap;
-  }
-
-  @media (max-width:900px) {
-    .wa-grid { grid-template-columns:1fr 1fr; }
-  }
-
-  @media (max-width:600px) {
-    .wa-grid { grid-template-columns:1fr; }
-    .wa-actions {
-      align-items:stretch;
-      flex-direction:column;
-    }
-    .wa-edit-actions {
-      width:100%;
-    }
-    .wa-edit-actions .btn {
-      flex:1;
-    }
+  @media (max-width:600px){
+    .wa-grid{ grid-template-columns:1fr; }
+    .wa-actions{ align-items:stretch; flex-direction:column; }
+    .wa-edit-actions{ width:100%; }
+    .wa-edit-actions .btn{ flex:1; }
   }
 </style>
 
-<div class="content-card wa-manage-page">
-  <div class="wa-manage-head">
-    <div>
-      <h4 class="wa-manage-title">⚙️ إدارة أرقام واتساب</h4>
-      <div class="text-muted small mt-1">
-        اضغط «تعديل» على الرقم المطلوب، ثم غيّر البيانات واضغط «حفظ التعديل».
-      </div>
-    </div>
+<div class="page-tiles wa-manage-page" style="max-width:1200px;">
+  <div class="tile-card">
+    <div class="w-100">
 
-    <a href="{{ url_for('whatsapp_branches') }}" class="btn btn-outline-secondary">
-      ← العودة إلى واتساب الفروع
-    </a>
-  </div>
-
-  <div class="wa-manage-note">
-    تعديل هذه البيانات يغيّر طريقة ظهور الرقم داخل موقع آل عشان فقط.
-    ربط الرقم مع Meta سيتم لاحقًا من خلال معرّف WhatsApp Business Platform.
-  </div>
-
-  <div class="wa-number-card mb-3">
-    <div class="wa-number-card-head">
-      <strong>🔗 ربط Meta WhatsApp Business Platform</strong>
-      <span class="wa-status {{ 'on' if webhook_verify_token_is_set and webhook_app_secret_is_set else 'off' }}">
-        {{ 'جاهز من جهة الموقع' if webhook_verify_token_is_set and webhook_app_secret_is_set else 'يحتاج إعداد Render' }}
-      </span>
-    </div>
-    <div class="wa-number-card-body">
-      <div class="mb-2">
-        <label class="fw-bold mb-1">Callback URL</label>
-        <input type="text" class="form-control" dir="ltr" value="{{ webhook_callback_url }}" readonly onclick="this.select()">
-      </div>
-      <div class="small text-muted">
-        في Render أضف المتغيرين:
-        <code>WHATSAPP_WEBHOOK_VERIFY_TOKEN</code>
-        و
-        <code>WHATSAPP_META_APP_SECRET</code>.
-        لا تضع App Secret داخل الكود.
-      </div>
-    </div>
-  </div>
-
-  {% for n in numbers %}
-    <div class="wa-number-card" id="card-{{ n['id'] }}">
-      <div class="wa-number-card-head">
+      <div class="page-titlebar d-flex justify-content-between align-items-start flex-wrap gap-2">
         <div>
-          <strong id="card-label-{{ n['id'] }}">{{ n['label'] }}</strong>
-          {% if n['phone_number'] %}
-            <span class="text-muted ms-2">{{ n['phone_number'] }}</span>
-          {% endif %}
+          <h3 class="m-0">إدارة أرقام واتساب</h3>
+          <span class="text-muted">إعداد أرقام الفروع وربط Meta وصلاحيات الموظفين</span>
         </div>
-
-        <span class="wa-status {{ 'on' if n['is_active'] else 'off' }}">
-          {{ 'مفعّل' if n['is_active'] else 'موقوف' }}
-        </span>
+        <div class="d-flex gap-2 flex-wrap mobile-stack">
+          <a href="{{ url_for('whatsapp_branches') }}" class="btn btn-secondary btn-sm">↩ رجوع إلى واتساب الفروع</a>
+        </div>
       </div>
 
-      <form
-        method="post"
-        action="{{ url_for('whatsapp_numbers_manage') }}"
-        class="wa-number-card-body"
-        id="form-{{ n['id'] }}"
-      >
-        <input type="hidden" name="action" value="update_number">
-        <input type="hidden" name="number_id" value="{{ n['id'] }}">
+      <div class="alert alert-info py-2 mb-3">
+        تعديل هذه البيانات يغيّر طريقة ظهور الرقم داخل موقع آل عشان. الربط الفعلي مع Meta يعتمد على <strong>Meta Phone Number ID</strong> وإعدادات Render.
+      </div>
 
-        <div class="wa-grid">
-          <div class="wa-field">
-            <label>اسم الرقم</label>
-            <input
-              type="text"
-              class="form-control wa-edit-field"
-              name="label"
-              value="{{ n['label'] }}"
-              required
-              maxlength="80"
-              placeholder="مثال: فرع الصناعية"
-              readonly
-            >
+      <div class="wa-section">
+        <div class="wa-section-head">
+          <strong>ربط Meta WhatsApp Business Platform</strong>
+          <span class="wa-status {{ 'on' if webhook_verify_token_is_set and webhook_app_secret_is_set and whatsapp_access_token_is_set else 'off' }}">
+            {{ 'جاهز للإرسال والاستقبال' if webhook_verify_token_is_set and webhook_app_secret_is_set and whatsapp_access_token_is_set else 'يحتاج إعداد Render' }}
+          </span>
+        </div>
+        <div class="wa-section-body">
+          <div class="row g-3 align-items-end">
+            <div class="col-12 col-lg-8">
+              <label class="form-label fw-bold">Callback URL</label>
+              <input type="text" class="form-control" dir="ltr" value="{{ webhook_callback_url }}" readonly onclick="this.select()">
+            </div>
+            <div class="col-12 col-lg-4">
+              <div class="totals-card p-3 h-100">
+                <div class="small text-muted">Graph API Version</div>
+                <div class="fw-bold" dir="ltr">{{ whatsapp_graph_version }}</div>
+              </div>
+            </div>
           </div>
-
-          <div class="wa-field">
-            <label>رمز الفرع</label>
-            <input
-              type="text"
-              class="form-control wa-edit-field"
-              name="branch_code"
-              value="{{ n['branch_code'] or '' }}"
-              maxlength="30"
-              placeholder="ES1"
-              readonly
-            >
-          </div>
-
-          <div class="wa-field">
-            <label>رقم الجوال</label>
-            <input
-              type="text"
-              class="form-control wa-edit-field"
-              name="phone_number"
-              value="{{ n['phone_number'] or '' }}"
-              maxlength="30"
-              dir="ltr"
-              placeholder="9665XXXXXXXX"
-              readonly
-            >
-          </div>
-
-          <div class="wa-field">
-            <label>Meta Phone Number ID</label>
-            <input
-              type="text"
-              class="form-control wa-edit-field"
-              name="meta_phone_number_id"
-              value="{{ n['meta_phone_number_id'] or '' }}"
-              maxlength="100"
-              dir="ltr"
-              placeholder="مثال: 123456789012345"
-              readonly
-            >
-          </div>
-
-          <div class="wa-field">
-            <label>الترتيب</label>
-            <input
-              type="number"
-              class="form-control wa-edit-field"
-              name="sort_order"
-              value="{{ n['sort_order'] or 0 }}"
-              min="0"
-              max="9999"
-              readonly
-            >
+          <div class="small text-muted mt-3">
+            متغيرات Render المطلوبة:
+            <code>WHATSAPP_WEBHOOK_VERIFY_TOKEN</code>،
+            <code>WHATSAPP_META_APP_SECRET</code>،
+            <code>WHATSAPP_META_ACCESS_TOKEN</code>.
+            لا تضع أي مفتاح سري داخل الكود أو GitHub.
           </div>
         </div>
+      </div>
 
-        <div class="wa-actions">
-          <div>
-            <div class="form-check form-switch wa-switch-wrap">
-              <input
-                class="form-check-input wa-active-switch"
-                type="checkbox"
-                role="switch"
-                name="is_active"
-                id="active-{{ n['id'] }}"
-                {% if n['is_active'] %}checked{% endif %}
-                disabled
-              >
-              <label class="form-check-label" for="active-{{ n['id'] }}">
-                إظهار الرقم في واتساب الفروع
-              </label>
+      {% for n in numbers %}
+        <div class="wa-section" id="card-{{ n['id'] }}">
+          <div class="wa-section-head">
+            <div>
+              <strong id="card-label-{{ n['id'] }}">{{ n['label'] }}</strong>
+              {% if n['phone_number'] %}<span class="small me-2" dir="ltr">{{ n['phone_number'] }}</span>{% endif %}
+            </div>
+            <span class="wa-status {{ 'on' if n['is_active'] else 'off' }}">{{ 'مفعّل' if n['is_active'] else 'موقوف' }}</span>
+          </div>
+
+          <form method="post" action="{{ url_for('whatsapp_numbers_manage') }}" class="wa-section-body wa-number-card-body" id="form-{{ n['id'] }}">
+            <input type="hidden" name="action" value="update_number">
+            <input type="hidden" name="number_id" value="{{ n['id'] }}">
+
+            <div class="wa-grid">
+              <div class="wa-field">
+                <label>اسم الرقم</label>
+                <input type="text" class="form-control wa-edit-field" name="label" value="{{ n['label'] }}" required maxlength="80" placeholder="مثال: فرع الصناعية" readonly>
+              </div>
+              <div class="wa-field">
+                <label>رمز الفرع</label>
+                <input type="text" class="form-control wa-edit-field" name="branch_code" value="{{ n['branch_code'] or '' }}" maxlength="30" placeholder="ES1" readonly>
+              </div>
+              <div class="wa-field">
+                <label>رقم الجوال</label>
+                <input type="text" class="form-control wa-edit-field" name="phone_number" value="{{ n['phone_number'] or '' }}" maxlength="30" dir="ltr" placeholder="9665XXXXXXXX" readonly>
+              </div>
+              <div class="wa-field">
+                <label>Meta Phone Number ID</label>
+                <input type="text" class="form-control wa-edit-field" name="meta_phone_number_id" value="{{ n['meta_phone_number_id'] or '' }}" maxlength="100" dir="ltr" placeholder="123456789012345" readonly>
+              </div>
+              <div class="wa-field">
+                <label>الترتيب</label>
+                <input type="number" class="form-control wa-edit-field" name="sort_order" value="{{ n['sort_order'] or 0 }}" min="0" max="9999" readonly>
+              </div>
             </div>
 
-            {% if n['meta_phone_number_id'] %}
-              <div class="wa-meta mt-1">
-                مربوط مع Meta — Phone Number ID: {{ n['meta_phone_number_id'] }}
+            <div class="wa-actions">
+              <div>
+                <div class="form-check form-switch wa-switch-wrap">
+                  <input class="form-check-input wa-active-switch" type="checkbox" role="switch" name="is_active" id="active-{{ n['id'] }}" {% if n['is_active'] %}checked{% endif %} disabled>
+                  <label class="form-check-label" for="active-{{ n['id'] }}">إظهار الرقم في واتساب الفروع</label>
+                </div>
+                {% if n['meta_phone_number_id'] %}
+                  <div class="wa-meta mt-1">مربوط مع Meta — Phone Number ID: {{ n['meta_phone_number_id'] }}</div>
+                {% else %}
+                  <div class="wa-meta mt-1">غير مربوط مع Meta — أدخل Meta Phone Number ID عند التعديل</div>
+                {% endif %}
               </div>
-            {% else %}
-              <div class="wa-meta mt-1">
-                غير مربوط مع Meta — أدخل Meta Phone Number ID عند التعديل
+
+              <div class="wa-edit-actions">
+                <button type="button" class="btn btn-primary btn-sm" id="edit-btn-{{ n['id'] }}" onclick="enableWaEdit({{ n['id'] }})">✏️ تعديل</button>
+                <button type="button" class="btn btn-secondary btn-sm d-none" id="cancel-btn-{{ n['id'] }}" onclick="cancelWaEdit({{ n['id'] }})">إلغاء</button>
+                <button type="submit" class="btn btn-success btn-sm px-3 d-none" id="save-btn-{{ n['id'] }}">💾 حفظ التعديل</button>
               </div>
-            {% endif %}
-          </div>
-
-          <div class="wa-edit-actions">
-            <button
-              type="button"
-              class="btn btn-primary"
-              id="edit-btn-{{ n['id'] }}"
-              onclick="enableWaEdit({{ n['id'] }})"
-            >
-              ✏️ تعديل
-            </button>
-
-            <button
-              type="button"
-              class="btn btn-outline-secondary d-none"
-              id="cancel-btn-{{ n['id'] }}"
-              onclick="cancelWaEdit({{ n['id'] }})"
-            >
-              إلغاء
-            </button>
-
-            <button
-              type="submit"
-              class="btn btn-success px-4 d-none"
-              id="save-btn-{{ n['id'] }}"
-            >
-              💾 حفظ التعديل
-            </button>
-          </div>
+            </div>
+          </form>
         </div>
-      </form>
+      {% else %}
+        <div class="alert alert-warning">لا توجد أرقام واتساب مسجلة.</div>
+      {% endfor %}
+
+      <div class="wa-section mt-4">
+        <div class="wa-section-head">
+          <strong>صلاحيات الموظفين على أرقام واتساب</strong>
+          <span class="text-muted small">عرض / رد لكل رقم</span>
+        </div>
+        <div class="wa-section-body">
+          <div class="alert alert-info py-2 small">
+            إذا لم تحفظ تخصيصًا لمستخدم، يبقى وصوله لجميع الأرقام وفق صلاحية «واتساب الفروع». بعد الحفظ تصبح الاختيارات أدناه هي المعتمدة له.
+          </div>
+
+          {% for u in users %}
+            <form method="post" action="{{ url_for('whatsapp_numbers_manage') }}" class="wa-user-card" id="user-{{ u['id'] }}">
+              <input type="hidden" name="action" value="save_number_access">
+              <input type="hidden" name="user_id" value="{{ u['id'] }}">
+              <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
+                <strong>👤 {{ u['username'] }}</strong>
+                {% if u['id'] in configured_users %}<span class="badge bg-success">مخصص</span>{% else %}<span class="badge bg-secondary">افتراضي: جميع الأرقام</span>{% endif %}
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle text-center mb-2">
+                  <thead><tr><th class="text-end">الرقم</th><th>عرض</th><th>رد</th></tr></thead>
+                  <tbody>
+                    {% for n in numbers %}
+                      {% set ac = access_map.get((u['id'], n['id'])) %}
+                      <tr>
+                        <td class="text-end"><strong>{{ n['label'] }}</strong><div class="small text-muted">{{ n['branch_code'] or '' }}</div></td>
+                        <td><input class="form-check-input" type="checkbox" name="view_{{ n['id'] }}" {% if ac and ac['can_view'] %}checked{% endif %}></td>
+                        <td><input class="form-check-input" type="checkbox" name="reply_{{ n['id'] }}" {% if ac and ac['can_reply'] %}checked{% endif %}></td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+              <button class="btn btn-primary btn-sm" type="submit">حفظ صلاحيات {{ u['username'] }}</button>
+            </form>
+          {% else %}
+            <div class="text-muted">لا يوجد مستخدمون آخرون لإدارة صلاحياتهم.</div>
+          {% endfor %}
+        </div>
+      </div>
+
     </div>
-  {% else %}
-    <div class="alert alert-warning">
-      لا توجد أرقام واتساب مسجلة.
-    </div>
-  {% endfor %}
+  </div>
 </div>
 
 <script>
@@ -349,41 +267,29 @@
   function enableWaEdit(id) {
     const form = document.getElementById(`form-${id}`);
     const card = document.getElementById(`card-${id}`);
-
     if (!form || !card) return;
 
     const fields = form.querySelectorAll('.wa-edit-field');
     const activeSwitch = form.querySelector('.wa-active-switch');
-
     waOriginalValues[id] = {
       fields: Array.from(fields).map(el => el.value),
       active: activeSwitch ? activeSwitch.checked : false
     };
 
-    fields.forEach(el => {
-      el.removeAttribute('readonly');
-    });
-
-    if (activeSwitch) {
-      activeSwitch.disabled = false;
-    }
-
+    fields.forEach(el => el.removeAttribute('readonly'));
+    if (activeSwitch) activeSwitch.disabled = false;
     card.classList.add('editing');
 
     document.getElementById(`edit-btn-${id}`).classList.add('d-none');
     document.getElementById(`cancel-btn-${id}`).classList.remove('d-none');
     document.getElementById(`save-btn-${id}`).classList.remove('d-none');
 
-    if (fields.length) {
-      fields[0].focus();
-      fields[0].select();
-    }
+    if (fields.length) { fields[0].focus(); fields[0].select(); }
   }
 
   function cancelWaEdit(id) {
     const form = document.getElementById(`form-${id}`);
     const card = document.getElementById(`card-${id}`);
-
     if (!form || !card) return;
 
     const fields = form.querySelectorAll('.wa-edit-field');
@@ -392,24 +298,13 @@
 
     if (original) {
       fields.forEach((el, index) => {
-        if (typeof original.fields[index] !== 'undefined') {
-          el.value = original.fields[index];
-        }
+        if (typeof original.fields[index] !== 'undefined') el.value = original.fields[index];
       });
-
-      if (activeSwitch) {
-        activeSwitch.checked = original.active;
-      }
+      if (activeSwitch) activeSwitch.checked = original.active;
     }
 
-    fields.forEach(el => {
-      el.setAttribute('readonly', 'readonly');
-    });
-
-    if (activeSwitch) {
-      activeSwitch.disabled = true;
-    }
-
+    fields.forEach(el => el.setAttribute('readonly', 'readonly'));
+    if (activeSwitch) activeSwitch.disabled = true;
     card.classList.remove('editing');
 
     document.getElementById(`edit-btn-${id}`).classList.remove('d-none');
@@ -420,11 +315,7 @@
   document.querySelectorAll('.wa-number-card-body').forEach(form => {
     form.addEventListener('submit', function() {
       const activeSwitch = form.querySelector('.wa-active-switch');
-
-      // يجب تمكين checkbox قبل submit حتى تصل قيمته إلى Flask.
-      if (activeSwitch) {
-        activeSwitch.disabled = false;
-      }
+      if (activeSwitch) activeSwitch.disabled = false;
     });
   });
 </script>

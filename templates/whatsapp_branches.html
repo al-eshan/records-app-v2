@@ -1,145 +1,553 @@
 {% extends "base.html" %}
 {% block content %}
 <style>
-  .wa-page { direction: rtl; }
-  .wa-topbar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
-  .wa-title { font-weight:800; margin:0; }
-  .wa-summary { display:flex; gap:8px; flex-wrap:wrap; }
-  .wa-summary .badge-box { background:#f3f4f6; border:1px solid #e5e7eb; border-radius:10px; padding:8px 12px; font-weight:700; }
-  .wa-connect-note { background:#ecfdf5; border:1px solid #a7f3d0; color:#166534; border-radius:12px; padding:11px 14px; margin-bottom:14px; }
-  .wa-number-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-  .wa-number-tabs a { text-decoration:none; border:1px solid #d1d5db; background:#fff; color:#1f2937; border-radius:10px; padding:8px 14px; font-weight:700; }
-  .wa-number-tabs a.active { background:#15803d; border-color:#15803d; color:#fff; }
-  .wa-number-tabs .status-dot { width:8px; height:8px; display:inline-block; border-radius:50%; margin-left:5px; background:#cbd5e1; }
-  .wa-number-tabs .status-dot.connected { background:#22c55e; }
-  .wa-shell { display:grid; grid-template-columns:minmax(280px, 36%) 1fr; min-height:650px; border:1px solid #e5e7eb; border-radius:16px; overflow:hidden; background:#fff; }
-  .wa-list { border-left:1px solid #e5e7eb; background:#f8fafc; }
-  .wa-search { padding:12px; border-bottom:1px solid #e5e7eb; }
-  .wa-search form { display:flex; gap:8px; }
-  .wa-search input { flex:1; }
-  .wa-conversation { display:block; text-decoration:none; color:inherit; padding:13px 14px; border-bottom:1px solid #e5e7eb; background:#fff; }
-  .wa-conversation:hover, .wa-conversation.active { background:#ecfdf5; }
-  .wa-conv-head { display:flex; justify-content:space-between; gap:8px; align-items:center; }
-  .wa-name { font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .wa-branch { font-size:.75rem; border-radius:999px; padding:3px 8px; background:#e5e7eb; }
-  .wa-preview { color:#6b7280; font-size:.9rem; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .wa-unread { min-width:24px; height:24px; border-radius:999px; background:#16a34a; color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:.75rem; font-weight:800; }
-  .wa-empty-list { padding:28px 18px; text-align:center; color:#6b7280; }
-  .wa-chat { display:flex; flex-direction:column; min-width:0; background:#f0f2f5; }
-  .wa-chat-header { background:#fff; border-bottom:1px solid #e5e7eb; padding:13px 16px; min-height:66px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
-  .wa-chat-body { flex:1; overflow:auto; padding:20px; background:#efeae2; }
-  .wa-chat-placeholder { height:100%; min-height:540px; display:flex; align-items:center; justify-content:center; text-align:center; color:#6b7280; padding:20px; }
-  .wa-bubble { max-width:76%; padding:9px 12px; border-radius:12px; margin-bottom:8px; box-shadow:0 1px 1px rgba(0,0,0,.06); }
-  .wa-bubble.in { margin-left:auto; background:#fff; }
-  .wa-bubble.out { margin-right:auto; background:#d9fdd3; }
-  .wa-msg-time { display:block; margin-top:4px; color:#6b7280; font-size:.72rem; }
-  .wa-readonly { background:#fff; border-top:1px solid #e5e7eb; padding:12px 16px; color:#6b7280; font-size:.9rem; text-align:center; }
-  @media (max-width: 900px) {
-    .wa-shell { grid-template-columns:1fr; }
-    .wa-list { border-left:0; border-bottom:1px solid #e5e7eb; max-height:340px; overflow:auto; }
-    .wa-chat-placeholder { min-height:360px; }
+  .wa-page{
+    direction:rtl;
+    width:100%;
+  }
+
+  /* العنوان بنفس هوية صفحات النظام */
+  .wa-page .page-titlebar{
+    text-align:right;
+  }
+  .wa-page .page-titlebar .text-muted{
+    color:rgba(255,255,255,.72)!important;
+  }
+
+  /* بطاقات الإحصاءات = totals-card الموجودة في app.css */
+  .wa-kpis{
+    display:grid;
+    grid-template-columns:repeat(3,minmax(135px,1fr));
+    gap:12px;
+    margin:14px 0 16px;
+  }
+  .wa-kpi{
+    min-height:78px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+  }
+  .wa-kpi .value{
+    font-size:1.35rem;
+    font-weight:900;
+    line-height:1.1;
+  }
+  .wa-kpi .label{
+    font-size:.8rem;
+    color:rgba(255,255,255,.75);
+    margin-top:5px;
+  }
+
+  .wa-connect-note{
+    margin:0 0 14px;
+  }
+  .wa-connect-note code{
+    color:#fff;
+  }
+
+  .wa-number-tabs{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    margin:0 0 14px;
+    text-align:right;
+  }
+  .wa-number-tabs .btn{
+    font-weight:800;
+  }
+  .status-dot{
+    width:8px;
+    height:8px;
+    display:inline-block;
+    border-radius:50%;
+    margin-left:5px;
+    background:#adb5bd;
+  }
+  .status-dot.connected{
+    background:#20c997;
+    box-shadow:0 0 0 3px rgba(32,201,151,.12);
+  }
+
+  /* صندوق المحادثات بنفس الزجاج الداكن للنظام */
+  .wa-shell{
+    display:grid;
+    grid-template-columns:minmax(310px,35%) 1fr;
+    height:calc(100vh - 350px);
+    min-height:610px;
+    border:1px solid var(--glass-border);
+    border-radius:16px;
+    overflow:hidden;
+    background:var(--glass);
+    box-shadow:var(--glass-shadow);
+    backdrop-filter:blur(8px);
+    text-align:right;
+  }
+
+  .wa-list{
+    border-left:1px solid var(--glass-border);
+    background:rgba(31,36,42,.42);
+    overflow:auto;
+    min-width:0;
+  }
+  .wa-search{
+    padding:11px;
+    position:sticky;
+    top:0;
+    z-index:2;
+    background:rgba(31,36,42,.90);
+    backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--glass-border);
+  }
+  .wa-search form{
+    display:flex;
+    gap:8px;
+  }
+  .wa-search input{
+    flex:1;
+    min-width:0;
+  }
+
+  .wa-conversation{
+    display:block;
+    text-decoration:none;
+    color:#fff;
+    padding:13px 14px;
+    border-bottom:1px solid rgba(255,255,255,.08);
+    background:transparent;
+    transition:.15s ease;
+  }
+  .wa-conversation:hover{
+    background:rgba(255,255,255,.06);
+    color:#fff;
+  }
+  .wa-conversation.active{
+    background:rgba(30,107,255,.20);
+    border-right:4px solid var(--card-active);
+    padding-right:10px;
+  }
+  .wa-conv-head{
+    display:flex;
+    justify-content:space-between;
+    gap:8px;
+    align-items:center;
+  }
+  .wa-name{
+    font-weight:900;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .wa-branch{
+    font-size:.72rem;
+    border-radius:999px;
+    padding:3px 8px;
+    background:rgba(255,255,255,.10);
+    border:1px solid rgba(255,255,255,.12);
+    color:#fff;
+    flex:none;
+  }
+  .wa-preview{
+    color:rgba(255,255,255,.66);
+    font-size:.88rem;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .wa-unread{
+    min-width:23px;
+    height:23px;
+    border-radius:999px;
+    background:#198754;
+    color:#fff;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    font-size:.72rem;
+    font-weight:900;
+    box-shadow:0 0 0 3px rgba(25,135,84,.12);
+  }
+  .wa-empty-list{
+    padding:34px 18px;
+    text-align:center;
+    color:rgba(255,255,255,.72);
+  }
+
+  .wa-chat{
+    display:flex;
+    flex-direction:column;
+    min-width:0;
+    min-height:0;
+    background:rgba(31,36,42,.32);
+  }
+  .wa-chat-header{
+    background:var(--thead-bg);
+    color:#fff;
+    padding:11px 14px;
+    min-height:64px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    border-bottom:1px solid var(--thead-border);
+  }
+  .wa-chat-header .text-muted{
+    color:rgba(255,255,255,.70)!important;
+  }
+  .wa-chat-body{
+    flex:1;
+    overflow:auto;
+    padding:16px;
+    background:
+      linear-gradient(rgba(31,36,42,.25),rgba(31,36,42,.25));
+  }
+  .wa-chat-placeholder{
+    height:100%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+    color:rgba(255,255,255,.70);
+    padding:24px;
+  }
+
+  /* فقاعات المحادثة: مخصصة وظيفيًا لكن ضمن نفس الهوية */
+  .wa-bubble-row{
+    display:flex;
+    margin-bottom:8px;
+  }
+  .wa-bubble-row.in{
+    justify-content:flex-start;
+  }
+  .wa-bubble-row.out{
+    justify-content:flex-end;
+  }
+  .wa-bubble{
+    max-width:min(78%,720px);
+    padding:9px 11px 7px;
+    border:1px solid rgba(255,255,255,.12);
+    border-radius:14px;
+    box-shadow:0 5px 14px rgba(0,0,0,.14);
+    word-break:break-word;
+    color:#fff;
+    text-align:right;
+  }
+  .wa-bubble-row.in .wa-bubble{
+    background:rgba(42,47,54,.94);
+  }
+  .wa-bubble-row.out .wa-bubble{
+    background:rgba(30,107,255,.34);
+    border-color:rgba(30,107,255,.45);
+  }
+  .wa-media{
+    margin-bottom:7px;
+    max-width:100%;
+  }
+  .wa-media img,
+  .wa-media video{
+    display:block;
+    max-width:100%;
+    max-height:360px;
+    border-radius:10px;
+  }
+  .wa-media audio{
+    max-width:100%;
+    width:320px;
+  }
+  .wa-document{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    text-decoration:none;
+    color:#fff;
+    padding:9px;
+    border-radius:10px;
+    background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.12);
+  }
+  .wa-document:hover{
+    color:#fff;
+    background:rgba(255,255,255,.12);
+  }
+  .wa-msg-meta{
+    display:flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:6px;
+    margin-top:5px;
+    font-size:.69rem;
+    color:rgba(255,255,255,.68);
+  }
+  .wa-agent{
+    font-size:.72rem;
+    font-weight:800;
+    color:#9ee2bd;
+    margin-bottom:4px;
+  }
+  .wa-status-icon.read{ color:#63a4ff; }
+  .wa-status-icon.failed{ color:#ff6b6b; }
+
+  .wa-composer{
+    background:rgba(31,36,42,.88);
+    border-top:1px solid var(--glass-border);
+    padding:10px 11px;
+    backdrop-filter:blur(8px);
+  }
+  .wa-compose-form{
+    display:grid;
+    grid-template-columns:auto 1fr auto;
+    gap:8px;
+    align-items:end;
+  }
+  .wa-compose-form textarea{
+    resize:none;
+    min-height:42px;
+    max-height:110px;
+  }
+  .wa-file-btn{
+    position:relative;
+    overflow:hidden;
+  }
+  .wa-file-btn input{
+    position:absolute;
+    inset:0;
+    opacity:0;
+    cursor:pointer;
+  }
+  .wa-window-note{
+    font-size:.78rem;
+    margin-bottom:6px;
+    color:#8be0b0!important;
+  }
+  .wa-closed{
+    background:var(--glass-strong);
+    color:#fff;
+    padding:10px 12px;
+    border-top:1px solid var(--glass-border);
+    text-align:center;
+  }
+  .wa-mobile-back{ display:none; }
+
+  @media (max-width:900px){
+    .wa-shell{
+      grid-template-columns:1fr;
+      height:calc(100vh - 285px);
+      min-height:560px;
+    }
+    .wa-list{ border-left:0; }
+    .wa-page.chat-open .wa-list{ display:none; }
+    .wa-page:not(.chat-open) .wa-chat{ display:none; }
+    .wa-mobile-back{ display:inline-flex; }
+    .wa-bubble{ max-width:88%; }
+  }
+
+  @media (max-width:600px){
+    .wa-kpis{
+      grid-template-columns:repeat(3,1fr);
+      gap:7px;
+    }
+    .wa-kpi{
+      min-height:68px;
+      padding:9px!important;
+    }
+    .wa-kpi .value{ font-size:1.08rem; }
+    .wa-kpi .label{ font-size:.70rem; }
+    .wa-number-tabs{
+      flex-wrap:nowrap;
+      overflow:auto;
+      padding-bottom:4px;
+    }
+    .wa-number-tabs .btn{ white-space:nowrap; }
+    .wa-shell{
+      border-radius:14px;
+      height:calc(100vh - 255px);
+      min-height:510px;
+    }
+    .wa-chat-body{ padding:11px 8px; }
   }
 </style>
 
-<div class="content-card wa-page">
-  <div class="wa-topbar">
-    <div>
-      <h4 class="wa-title">💬 واتساب الفروع</h4>
-      <div class="text-muted small mt-1">صندوق موحد لمتابعة أرقام واتساب الأعمال</div>
-    </div>
-    <div class="d-flex align-items-center gap-2 flex-wrap">
-      {% if can_manage_numbers %}
-        <a href="{{ url_for('whatsapp_numbers_manage') }}" class="btn btn-outline-success fw-bold">
-          ⚙️ إدارة أرقام واتساب
-        </a>
+<div class="page-tiles wa-page {% if active_conversation %}chat-open{% endif %}" style="max-width:1400px;">
+  <div class="tile-card">
+    <div class="w-100">
+
+      <div class="page-titlebar d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <div>
+          <h3 class="m-0">واتساب الفروع</h3>
+          <span class="text-muted">إرسال واستقبال ومتابعة أرقام واتساب من نظام آل عشان</span>
+        </div>
+        <div class="d-flex gap-2 flex-wrap mobile-stack">
+          {% if can_manage_numbers %}
+            <a class="btn btn-secondary btn-sm" href="{{ url_for('whatsapp_numbers_manage') }}">⚙️ إدارة الأرقام</a>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="wa-kpis">
+        <div class="totals-card p-3 wa-kpi">
+          <div><div class="value">{{ numbers|length }}</div><div class="label">الأرقام المتاحة</div></div>
+        </div>
+        <div class="totals-card p-3 wa-kpi">
+          <div><div class="value">{{ connected_count }}</div><div class="label">الأرقام المربوطة</div></div>
+        </div>
+        <div class="totals-card p-3 wa-kpi">
+          <div><div class="value" id="waUnreadTop">{{ total_unread }}</div><div class="label">غير المقروء</div></div>
+        </div>
+      </div>
+
+      {% if connected_count == 0 or not api_ready %}
+        <div class="alert alert-warning py-2 wa-connect-note" role="alert">
+          {% if connected_count == 0 %}لم يتم إدخال Meta Phone Number ID لأي رقم متاح لك. {% endif %}
+          {% if not api_ready %}الإرسال يحتاج إضافة <code>WHATSAPP_META_ACCESS_TOKEN</code> في Render. {% endif %}
+        </div>
       {% endif %}
-      <div class="wa-summary">
-        <span class="badge-box">الأرقام: {{ numbers|length }}</span>
-        <span class="badge-box">المربوط: {{ connected_count }}</span>
-        <span class="badge-box">غير المقروء: {{ total_unread }}</span>
-      </div>
-    </div>
-  </div>
 
-  {% if connected_count == 0 %}
-    <div class="wa-connect-note">
-      الواجهة جاهزة. لم يتم ربط أرقام WhatsApp Business Platform حتى الآن، لذلك لن تظهر المحادثات قبل تفعيل الربط الرسمي مع Meta.
-    </div>
-  {% endif %}
-
-  <div class="wa-number-tabs">
-    <a href="{{ url_for('whatsapp_branches', number='all', q=search_text) }}" class="{% if selected_number == 'all' %}active{% endif %}">الكل</a>
-    {% for n in numbers %}
-      <a href="{{ url_for('whatsapp_branches', number=n['id'], q=search_text) }}" class="{% if selected_number|string == n['id']|string %}active{% endif %}">
-        <span class="status-dot {% if n['meta_phone_number_id'] %}connected{% endif %}"></span>{{ n['label'] }}
-      </a>
-    {% endfor %}
-  </div>
-
-  <div class="wa-shell">
-    <section class="wa-list">
-      <div class="wa-search">
-        <form method="get" action="{{ url_for('whatsapp_branches') }}">
-          <input type="hidden" name="number" value="{{ selected_number }}">
-          <input class="form-control" type="search" name="q" value="{{ search_text }}" placeholder="بحث بالاسم أو الرقم أو الرسالة...">
-          <button class="btn btn-success" type="submit">بحث</button>
-        </form>
-      </div>
-
-      {% if conversations %}
-        {% for c in conversations %}
-          <a class="wa-conversation {% if active_conversation and active_conversation['id'] == c['id'] %}active{% endif %}"
-             href="{{ url_for('whatsapp_branches', number=selected_number, q=search_text, conversation=c['id']) }}">
-            <div class="wa-conv-head">
-              <div class="wa-name">{{ c['contact_name'] or c['contact_wa_id'] or 'عميل بدون اسم' }}</div>
-              <span class="wa-branch">{{ c['number_label'] }}</span>
-            </div>
-            <div class="d-flex justify-content-between align-items-center gap-2 mt-1">
-              <div class="wa-preview">{{ c['last_message'] or 'لا توجد معاينة' }}</div>
-              {% if c['unread_count'] %}<span class="wa-unread">{{ c['unread_count'] }}</span>{% endif %}
-            </div>
+      <div class="wa-number-tabs">
+        <a href="{{ url_for('whatsapp_branches', number='all', q=search_text) }}"
+           class="btn btn-sm {% if selected_number == 'all' %}btn-primary{% else %}btn-outline-light{% endif %}">الكل</a>
+        {% for n in numbers %}
+          <a href="{{ url_for('whatsapp_branches', number=n['id'], q=search_text) }}"
+             class="btn btn-sm {% if selected_number|string == n['id']|string %}btn-primary{% else %}btn-outline-light{% endif %}">
+            <span class="status-dot {% if n['meta_phone_number_id'] %}connected{% endif %}"></span>{{ n['label'] }}
           </a>
         {% endfor %}
-      {% else %}
-        <div class="wa-empty-list">
-          <div style="font-size:2rem">💬</div>
-          <strong>لا توجد محادثات بعد</strong>
-          <div class="small mt-2">ستظهر المحادثات هنا تلقائيًا بعد ربط الأرقام واستقبال الرسائل.</div>
-        </div>
-      {% endif %}
-    </section>
+      </div>
 
-    <section class="wa-chat">
-      {% if active_conversation %}
-        <div class="wa-chat-header">
-          <div>
-            <div class="fw-bold">{{ active_conversation['contact_name'] or active_conversation['contact_wa_id'] or 'عميل بدون اسم' }}</div>
-            <div class="small text-muted">{{ active_conversation['contact_wa_id'] or '' }}</div>
+      <div class="wa-shell">
+        <section class="wa-list">
+          <div class="wa-search">
+            <form method="get" action="{{ url_for('whatsapp_branches') }}">
+              <input type="hidden" name="number" value="{{ selected_number }}">
+              <input class="form-control form-control-sm" type="search" name="q" value="{{ search_text }}" placeholder="بحث بالاسم أو الرقم أو الرسالة...">
+              <button class="btn btn-primary btn-sm" type="submit">🔍 بحث</button>
+            </form>
           </div>
-          <span class="badge bg-success">{{ active_conversation['number_label'] }}</span>
-        </div>
-        <div class="wa-chat-body">
-          {% for m in messages %}
-            <div class="wa-bubble {{ 'out' if m['direction'] == 'out' else 'in' }}">
-              {% if m['message_type'] != 'text' %}<div class="small text-muted mb-1">{{ m['message_type'] }}</div>{% endif %}
-              <div>{{ m['body'] or 'مرفق/رسالة بدون نص' }}</div>
-              <span class="wa-msg-time">{{ m['sent_at'] or '' }}</span>
-            </div>
+
+          {% if conversations %}
+            {% for c in conversations %}
+              <a class="wa-conversation {% if active_conversation and active_conversation['id'] == c['id'] %}active{% endif %}"
+                 href="{{ url_for('whatsapp_branches', number=selected_number, q=search_text, conversation=c['id']) }}">
+                <div class="wa-conv-head">
+                  <div class="wa-name">{{ c['contact_name'] or c['contact_wa_id'] or 'عميل بدون اسم' }}</div>
+                  <span class="wa-branch">{{ c['number_label'] }}</span>
+                </div>
+                <div class="d-flex justify-content-between align-items-center gap-2 mt-1">
+                  <div class="wa-preview">{{ c['last_message'] or 'لا توجد معاينة' }}</div>
+                  {% if c['unread_count'] %}<span class="wa-unread">{{ c['unread_count'] }}</span>{% endif %}
+                </div>
+              </a>
+            {% endfor %}
           {% else %}
-            <div class="wa-chat-placeholder">لا توجد رسائل محفوظة لهذه المحادثة.</div>
-          {% endfor %}
-        </div>
-        <div class="wa-readonly">المرحلة الحالية للمتابعة والاطلاع فقط — الرد من الموقع سيُفعّل بعد ربط Meta.</div>
-      {% else %}
-        <div class="wa-chat-placeholder">
-          <div>
-            <div style="font-size:3rem">📱</div>
-            <h5 class="mt-2">اختر محادثة لعرضها</h5>
-            <div>سيظهر سجل الرسائل هنا بعد ربط الأرقام الخمسة رسميًا.</div>
-          </div>
-        </div>
-      {% endif %}
-    </section>
+            <div class="wa-empty-list">
+              <div style="font-size:2rem">💬</div>
+              <strong>لا توجد محادثات</strong>
+              <div class="small mt-2">ستظهر هنا بعد وصول أول رسالة للرقم المربوط.</div>
+            </div>
+          {% endif %}
+        </section>
+
+        <section class="wa-chat">
+          {% if active_conversation %}
+            <div class="wa-chat-header">
+              <div class="d-flex align-items-center gap-2">
+                <a class="btn btn-secondary btn-sm wa-mobile-back" href="{{ url_for('whatsapp_branches', number=selected_number, q=search_text) }}">←</a>
+                <div>
+                  <div class="fw-bold">{{ active_conversation['contact_name'] or active_conversation['contact_wa_id'] or 'عميل بدون اسم' }}</div>
+                  <div class="small text-muted" dir="ltr">{{ active_conversation['contact_wa_id'] or '' }}</div>
+                </div>
+              </div>
+              <span class="badge bg-secondary">{{ active_conversation['number_label'] }}</span>
+            </div>
+
+            <div class="wa-chat-body" id="waChatBody">
+              {% for m in messages %}
+                <div class="wa-bubble-row {{ 'out' if m['direction']=='out' else 'in' }}">
+                  <div class="wa-bubble">
+                    {% if m['direction']=='out' and m['sent_by_username'] %}<div class="wa-agent">👤 {{ m['sent_by_username'] }}</div>{% endif %}
+                    {% if m['meta_media_id'] %}
+                      <div class="wa-media">
+                        {% if m['message_type']=='image' %}
+                          <a href="{{ url_for('whatsapp_media', message_id=m['id']) }}" target="_blank"><img loading="lazy" src="{{ url_for('whatsapp_media', message_id=m['id']) }}" alt="صورة واتساب"></a>
+                        {% elif m['message_type']=='video' %}
+                          <video controls preload="metadata" src="{{ url_for('whatsapp_media', message_id=m['id']) }}"></video>
+                        {% elif m['message_type']=='audio' %}
+                          <audio controls preload="none" src="{{ url_for('whatsapp_media', message_id=m['id']) }}"></audio>
+                        {% elif m['message_type']=='document' %}
+                          <a class="wa-document" href="{{ url_for('whatsapp_media', message_id=m['id']) }}">📄 <span>{{ m['media_filename'] or 'فتح المستند' }}</span></a>
+                        {% endif %}
+                      </div>
+                    {% endif %}
+                    {% if m['body'] %}<div>{{ m['body'] }}</div>{% endif %}
+                    <div class="wa-msg-meta">
+                      <span>{{ m['sent_at'] or '' }}</span>
+                      {% if m['direction']=='out' %}
+                        {% set st = m['status'] or 'sent' %}
+                        <span class="wa-status-icon {{ 'read' if st=='read' else ('failed' if st=='failed' else '') }}" title="{{ m['status_error'] or st }}">
+                          {% if st=='read' %}✓✓{% elif st=='delivered' %}✓✓{% elif st=='failed' %}⚠{% else %}✓{% endif %}
+                        </span>
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
+              {% else %}
+                <div class="wa-chat-placeholder">لا توجد رسائل محفوظة لهذه المحادثة.</div>
+              {% endfor %}
+            </div>
+
+            {% if can_reply_active and api_ready %}
+              {% if freeform_open %}
+                <div class="wa-composer">
+                  <div class="wa-window-note">● نافذة خدمة العميل مفتوحة — يمكنك الرد الآن.</div>
+                  <form class="wa-compose-form" method="post" enctype="multipart/form-data" action="{{ url_for('whatsapp_send_message', conversation_id=active_conversation['id']) }}" id="waComposer">
+                    <label class="btn btn-secondary wa-file-btn" title="إرفاق صورة أو ملف أو صوت">📎<input type="file" name="attachment" id="waAttachment" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"></label>
+                    <textarea class="form-control" name="message" id="waMessage" placeholder="اكتب الرد..." rows="1"></textarea>
+                    <button class="btn btn-primary px-3" type="submit">إرسال</button>
+                  </form>
+                  <div class="small text-muted mt-1" id="waFileName"></div>
+                </div>
+              {% else %}
+                <div class="wa-closed">⏱️ انتهت نافذة الـ24 ساعة. الرسالة العادية غير مسموحة؛ المرحلة التالية ستضيف إرسال القوالب المعتمدة.</div>
+              {% endif %}
+            {% elif not can_reply_active %}
+              <div class="wa-closed">👁️ لديك صلاحية عرض هذه المحادثة فقط، بدون رد.</div>
+            {% else %}
+              <div class="wa-closed">⚙️ يلزم ضبط Access Token في Render قبل الإرسال.</div>
+            {% endif %}
+          {% else %}
+            <div class="wa-chat-placeholder">
+              <div><div style="font-size:3rem">📱</div><h5 class="mt-2">اختر محادثة</h5><div>يمكن فتح المحادثة والرد عليها من الكمبيوتر أو الجوال.</div></div>
+            </div>
+          {% endif %}
+        </section>
+      </div>
+
+    </div>
   </div>
 </div>
+
+<script>
+(function(){
+  const chat = document.getElementById('waChatBody');
+  if (chat) chat.scrollTop = chat.scrollHeight;
+  const file = document.getElementById('waAttachment');
+  const fileName = document.getElementById('waFileName');
+  if (file && fileName) file.addEventListener('change', () => { fileName.textContent = file.files.length ? ('المرفق: ' + file.files[0].name) : ''; });
+  {% if active_conversation %}
+  const currentLatest = {{ latest_message_id|default(0) }};
+  setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      const r = await fetch('{{ url_for("whatsapp_api_state", conversation=active_conversation["id"]) }}', {cache:'no-store'});
+      if (!r.ok) return;
+      const data = await r.json();
+      const top = document.getElementById('waUnreadTop'); if(top) top.textContent = data.total_unread || 0;
+      const msg = document.getElementById('waMessage');
+      const attachment = document.getElementById('waAttachment');
+      const composing = (msg && msg.value.trim()) || (attachment && attachment.files && attachment.files.length);
+      if (!composing && Number(data.latest_message_id || 0) > Number(currentLatest || 0)) location.reload();
+    } catch(e) {}
+  }, 7000);
+  {% endif %}
+})();
+</script>
 {% endblock %}

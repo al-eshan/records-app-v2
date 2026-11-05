@@ -3,6 +3,7 @@ import os
 import json
 import hmac
 import hashlib
+import mimetypes
 import sqlite3
 import uuid
 import urllib.request
@@ -646,7 +647,7 @@ def ws_replace_all(tab_name: str, headers: list, rows: list):
 # WhatsApp branches / unified inbox
 # =========================
 def ensure_whatsapp_schema(db):
-    """Create local WhatsApp inbox tables. Meta/Webhook integration can populate them later."""
+    """Create/upgrade local WhatsApp inbox tables."""
     db.execute("""
         CREATE TABLE IF NOT EXISTS wa_numbers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -668,6 +669,7 @@ def ensure_whatsapp_schema(db):
             contact_name TEXT,
             last_message TEXT,
             last_message_at TEXT,
+            last_inbound_at TEXT,
             unread_count INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT,
             FOREIGN KEY (wa_number_id) REFERENCES wa_numbers(id)
@@ -683,26 +685,59 @@ def ensure_whatsapp_schema(db):
             message_type TEXT NOT NULL DEFAULT 'text',
             body TEXT,
             media_url TEXT,
+            meta_media_id TEXT,
+            media_mime_type TEXT,
+            media_filename TEXT,
             sent_at TEXT,
             status TEXT,
+            status_error TEXT,
+            sent_by_user_id INTEGER,
+            sent_by_username TEXT,
             created_at TEXT,
             FOREIGN KEY (conversation_id) REFERENCES wa_conversations(id)
         )
     """)
 
-    # Safe migrations for WhatsApp integration fields
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS wa_number_permissions (
+            user_id INTEGER NOT NULL,
+            wa_number_id INTEGER NOT NULL,
+            can_view INTEGER NOT NULL DEFAULT 0,
+            can_reply INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT,
+            PRIMARY KEY (user_id, wa_number_id),
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (wa_number_id) REFERENCES wa_numbers(id)
+        )
+    """)
+
+    # Safe migrations for existing databases.
     number_cols = [r[1] for r in db.execute("PRAGMA table_info(wa_numbers)").fetchall()]
     if "meta_phone_number_id" not in number_cols:
         db.execute("ALTER TABLE wa_numbers ADD COLUMN meta_phone_number_id TEXT")
 
+    conv_cols = [r[1] for r in db.execute("PRAGMA table_info(wa_conversations)").fetchall()]
+    if "last_inbound_at" not in conv_cols:
+        db.execute("ALTER TABLE wa_conversations ADD COLUMN last_inbound_at TEXT")
+
     message_cols = [r[1] for r in db.execute("PRAGMA table_info(wa_messages)").fetchall()]
-    if "meta_media_id" not in message_cols:
-        db.execute("ALTER TABLE wa_messages ADD COLUMN meta_media_id TEXT")
+    migrations = {
+        "meta_media_id": "TEXT",
+        "media_mime_type": "TEXT",
+        "media_filename": "TEXT",
+        "status_error": "TEXT",
+        "sent_by_user_id": "INTEGER",
+        "sent_by_username": "TEXT",
+    }
+    for col, col_type in migrations.items():
+        if col not in message_cols:
+            db.execute(f"ALTER TABLE wa_messages ADD COLUMN {col} {col_type}")
 
     db.execute("CREATE INDEX IF NOT EXISTS idx_wa_conversations_number ON wa_conversations(wa_number_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_wa_conversations_contact ON wa_conversations(wa_number_id, contact_wa_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_wa_messages_conversation ON wa_messages(conversation_id)")
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_wa_messages_meta_id ON wa_messages(meta_message_id) WHERE meta_message_id IS NOT NULL")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_wa_number_permissions_user ON wa_number_permissions(user_id)")
 
     count = db.execute("SELECT COUNT(*) AS c FROM wa_numbers").fetchone()["c"]
     if int(count or 0) == 0:
@@ -724,6 +759,75 @@ def ensure_whatsapp_schema(db):
 
     db.commit()
 
+
+def _wa_allowed_number_ids(db, require_reply=False):
+    """Return active WhatsApp number IDs visible/repliable by the logged-in user.
+
+    Backward compatibility: users who have the general WhatsApp permission but no
+    per-number rows yet can see/reply to all active numbers. Once an admin saves
+    per-number permissions for that user, those rows become authoritative.
+    """
+    if not session.get("logged_in"):
+        return []
+
+    active_rows = db.execute(
+        "SELECT id FROM wa_numbers WHERE is_active=1 ORDER BY sort_order, id"
+    ).fetchall()
+    active_ids = [int(r["id"]) for r in active_rows]
+
+    if session.get("username") == MASTER_USERNAME:
+        return active_ids
+
+    perms = session.get("perms") or {}
+    if not bool(perms.get("whatsapp_branches")):
+        return []
+
+    user_id = session.get("user_id")
+    if not user_id:
+        return []
+
+    rows = db.execute(
+        """
+        SELECT wa_number_id, can_view, can_reply
+        FROM wa_number_permissions
+        WHERE user_id=?
+        """,
+        (user_id,),
+    ).fetchall()
+
+    if not rows:
+        return active_ids
+
+    allowed = []
+    active_set = set(active_ids)
+    for r in rows:
+        nid = int(r["wa_number_id"])
+        if nid not in active_set:
+            continue
+        ok = bool(r["can_reply"]) if require_reply else bool(r["can_view"] or r["can_reply"])
+        if ok:
+            allowed.append(nid)
+    return allowed
+
+
+def _wa_total_unread_for_session():
+    if not session.get("logged_in"):
+        return 0
+    try:
+        db = get_db()
+        ensure_whatsapp_schema(db)
+        ids = _wa_allowed_number_ids(db, require_reply=False)
+        if not ids:
+            return 0
+        placeholders = ",".join(["?"] * len(ids))
+        row = db.execute(
+            f"SELECT COALESCE(SUM(unread_count),0) AS c FROM wa_conversations WHERE wa_number_id IN ({placeholders})",
+            ids,
+        ).fetchone()
+        return int(row["c"] or 0)
+    except Exception as exc:
+        print("WhatsApp unread context error:", exc)
+        return 0
 
 # =========================
 # Debug routes (مؤقتة للتشخيص)
@@ -930,6 +1034,7 @@ def inject_helpers():
         "status_color": status_color,
         "perm_labels": PERM_LABELS,
         "perm_keys": PERM_KEYS,
+        "whatsapp_unread_count": _wa_total_unread_for_session(),
         **_accounting_alert_context(),
     }
 
@@ -998,7 +1103,7 @@ def home():
 
 
 # =========================
-# WhatsApp Cloud API webhook
+# WhatsApp Cloud API integration
 # =========================
 def _wa_webhook_verify_token():
     return (os.environ.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN") or "").strip()
@@ -1008,60 +1113,167 @@ def _wa_meta_app_secret():
     return (os.environ.get("WHATSAPP_META_APP_SECRET") or "").strip()
 
 
+def _wa_access_token():
+    return (os.environ.get("WHATSAPP_META_ACCESS_TOKEN") or "").strip()
+
+
+def _wa_graph_version():
+    value = (os.environ.get("WHATSAPP_GRAPH_API_VERSION") or "v26.0").strip()
+    if not value.startswith("v"):
+        value = "v" + value
+    return value
+
+
 def _wa_signature_valid(raw_body: bytes, signature_header: str) -> bool:
-    """Validate Meta X-Hub-Signature-256 using the app secret."""
     secret = _wa_meta_app_secret()
     if not secret or not signature_header:
         return False
-
     expected = "sha256=" + hmac.new(
-        secret.encode("utf-8"),
-        raw_body,
-        hashlib.sha256,
+        secret.encode("utf-8"), raw_body, hashlib.sha256
     ).hexdigest()
-
     return hmac.compare_digest(expected, signature_header.strip())
 
 
+def _wa_graph_request(method, path, payload=None, raw_body=None, extra_headers=None, timeout=25):
+    """Call Meta Graph API without exposing the token in templates/logs."""
+    token = _wa_access_token()
+    if not token:
+        return None, "WHATSAPP_META_ACCESS_TOKEN غير مضبوط في Render"
+
+    if path.startswith("http://") or path.startswith("https://"):
+        url = path
+    else:
+        url = f"https://graph.facebook.com/{_wa_graph_version()}/{path.lstrip('/')}"
+
+    headers = {"Authorization": f"Bearer {token}"}
+    data = raw_body
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json; charset=utf-8"
+    if extra_headers:
+        headers.update(extra_headers)
+
+    req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+            ctype = resp.headers.get("Content-Type", "")
+            if "application/json" in ctype or (body[:1] in (b"{", b"[")):
+                return json.loads(body.decode("utf-8")), None
+            return {"raw": body, "content_type": ctype}, None
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(body)
+            message = ((parsed.get("error") or {}).get("message") or body).strip()
+            code = (parsed.get("error") or {}).get("code")
+            subcode = (parsed.get("error") or {}).get("error_subcode")
+            suffix = ""
+            if code is not None:
+                suffix += f" (code {code}"
+                if subcode is not None:
+                    suffix += f", subcode {subcode}"
+                suffix += ")"
+            return None, message + suffix
+        except Exception:
+            return None, body or f"HTTP {exc.code}"
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _wa_upload_media(phone_number_id, file_storage):
+    filename = secure_filename(file_storage.filename or "attachment") or "attachment"
+    mime_type = file_storage.mimetype or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    content = file_storage.read()
+    max_bytes = 16 * 1024 * 1024
+    if len(content) > max_bytes:
+        return None, None, None, "حجم المرفق أكبر من 16MB؛ صغّر الملف ثم حاول مرة أخرى"
+
+    boundary = "----AlEshanWhatsApp" + uuid.uuid4().hex
+    parts = []
+    def add_field(name, value):
+        parts.append(f"--{boundary}\r\n".encode())
+        parts.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+        parts.append(str(value).encode("utf-8"))
+        parts.append(b"\r\n")
+
+    add_field("messaging_product", "whatsapp")
+    parts.append(f"--{boundary}\r\n".encode())
+    parts.append(
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode("utf-8")
+    )
+    parts.append(f"Content-Type: {mime_type}\r\n\r\n".encode())
+    parts.append(content)
+    parts.append(b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    body = b"".join(parts)
+
+    data, err = _wa_graph_request(
+        "POST",
+        f"{phone_number_id}/media",
+        raw_body=body,
+        extra_headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        timeout=45,
+    )
+    if err:
+        return None, None, None, err
+    media_id = str((data or {}).get("id") or "").strip()
+    if not media_id:
+        return None, None, None, "Meta لم تُرجع Media ID"
+    return media_id, mime_type, filename, None
+
+
+def _wa_send_payload(phone_number_id, payload):
+    data, err = _wa_graph_request("POST", f"{phone_number_id}/messages", payload=payload)
+    if err:
+        return None, err
+    messages = (data or {}).get("messages") or []
+    if not messages:
+        return None, "تم قبول الطلب لكن Meta لم تُرجع Message ID"
+    message_id = str(messages[0].get("id") or "").strip()
+    return message_id or None, None
+
+
+def _wa_mark_read(phone_number_id, meta_message_id):
+    if not phone_number_id or not meta_message_id or not _wa_access_token():
+        return
+    payload = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": meta_message_id,
+    }
+    _, err = _wa_graph_request("POST", f"{phone_number_id}/messages", payload=payload)
+    if err:
+        print("WhatsApp mark-read warning:", err)
+
+
 def _wa_message_summary(message: dict):
-    """Return (body, meta_media_id) for common WhatsApp message types."""
+    """Return body/media metadata for common WhatsApp message types."""
     msg_type = (message.get("type") or "unknown").strip()
     body = ""
     media_id = None
+    mime_type = None
+    filename = None
 
     if msg_type == "text":
         body = ((message.get("text") or {}).get("body") or "").strip()
-
-    elif msg_type == "image":
-        data = message.get("image") or {}
+    elif msg_type in ("image", "video", "audio", "document", "sticker"):
+        data = message.get(msg_type) or {}
         media_id = data.get("id")
+        mime_type = data.get("mime_type")
+        filename = data.get("filename")
         caption = (data.get("caption") or "").strip()
-        body = f"📷 صورة{': ' + caption if caption else ''}"
-
-    elif msg_type == "video":
-        data = message.get("video") or {}
-        media_id = data.get("id")
-        caption = (data.get("caption") or "").strip()
-        body = f"🎥 فيديو{': ' + caption if caption else ''}"
-
-    elif msg_type == "audio":
-        data = message.get("audio") or {}
-        media_id = data.get("id")
-        body = "🎵 رسالة صوتية"
-
-    elif msg_type == "document":
-        data = message.get("document") or {}
-        media_id = data.get("id")
-        filename = (data.get("filename") or "").strip()
-        caption = (data.get("caption") or "").strip()
+        labels = {
+            "image": "📷 صورة",
+            "video": "🎥 فيديو",
+            "audio": "🎵 رسالة صوتية",
+            "document": "📄 مستند",
+            "sticker": "🖼️ ملصق",
+        }
+        body = labels[msg_type]
         tail = filename or caption
-        body = f"📄 مستند{': ' + tail if tail else ''}"
-
-    elif msg_type == "sticker":
-        data = message.get("sticker") or {}
-        media_id = data.get("id")
-        body = "🖼️ ملصق"
-
+        if tail:
+            body += f": {tail}"
     elif msg_type == "location":
         data = message.get("location") or {}
         name = (data.get("name") or "").strip()
@@ -1075,27 +1287,17 @@ def _wa_message_summary(message: dict):
             body += f": {address}"
         elif lat is not None and lon is not None:
             body += f": {lat}, {lon}"
-
     elif msg_type == "button":
         data = message.get("button") or {}
         body = (data.get("text") or data.get("payload") or "🔘 زر").strip()
-
     elif msg_type == "interactive":
         data = message.get("interactive") or {}
         button_reply = data.get("button_reply") or {}
         list_reply = data.get("list_reply") or {}
-        body = (
-            button_reply.get("title")
-            or list_reply.get("title")
-            or list_reply.get("description")
-            or "↩️ رد تفاعلي"
-        )
-
+        body = button_reply.get("title") or list_reply.get("title") or list_reply.get("description") or "↩️ رد تفاعلي"
     elif msg_type == "reaction":
-        data = message.get("reaction") or {}
-        emoji = (data.get("emoji") or "").strip()
+        emoji = ((message.get("reaction") or {}).get("emoji") or "").strip()
         body = f"تفاعل {emoji}".strip()
-
     elif msg_type == "contacts":
         contacts = message.get("contacts") or []
         if contacts:
@@ -1103,48 +1305,55 @@ def _wa_message_summary(message: dict):
             body = f"👤 جهة اتصال: {name_data.get('formatted_name') or ''}".strip()
         else:
             body = "👤 جهة اتصال"
-
     else:
         body = f"رسالة من نوع {msg_type}"
 
-    return body or "رسالة واتساب", media_id
+    return body or "رسالة واتساب", media_id, mime_type, filename
 
 
 def _wa_iso_from_unix(timestamp_value):
     try:
-        return datetime.fromtimestamp(
-            int(timestamp_value),
-            tz=timezone.utc,
-        ).isoformat(timespec="seconds")
+        return datetime.fromtimestamp(int(timestamp_value), tz=timezone.utc).isoformat(timespec="seconds")
     except Exception:
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _wa_parse_iso(value):
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _wa_freeform_open(last_inbound_at):
+    dt = _wa_parse_iso(last_inbound_at)
+    if not dt:
+        return False, None
+    expires = dt + timedelta(hours=24)
+    return datetime.now(timezone.utc) < expires, expires
+
+
 @app.route("/webhooks/whatsapp", methods=["GET", "POST"])
 def whatsapp_webhook():
-    """
-    GET  : Meta verification handshake.
-    POST : Receive WhatsApp Business Platform events.
-    """
     if request.method == "GET":
         mode = (request.args.get("hub.mode") or "").strip()
         token = (request.args.get("hub.verify_token") or "").strip()
         challenge = request.args.get("hub.challenge") or ""
         expected_token = _wa_webhook_verify_token()
-
         if expected_token and mode == "subscribe" and hmac.compare_digest(token, expected_token):
             return challenge, 200, {"Content-Type": "text/plain; charset=utf-8"}
-
         return "Forbidden", 403
 
     raw_body = request.get_data(cache=True)
     signature = request.headers.get("X-Hub-Signature-256", "")
-
-    # Fail closed: production events are accepted only when the Meta signature is valid.
     if not _wa_meta_app_secret():
         print("WhatsApp webhook rejected: WHATSAPP_META_APP_SECRET is not configured")
         return "Webhook app secret is not configured", 503
-
     if not _wa_signature_valid(raw_body, signature):
         print("WhatsApp webhook rejected: invalid Meta signature")
         return "Invalid signature", 401
@@ -1155,25 +1364,27 @@ def whatsapp_webhook():
 
     db = get_db()
     ensure_whatsapp_schema(db)
-
     try:
         for entry in payload.get("entry") or []:
             for change in entry.get("changes") or []:
                 if change.get("field") != "messages":
                     continue
-
                 value = change.get("value") or {}
                 metadata = value.get("metadata") or {}
                 meta_phone_number_id = str(metadata.get("phone_number_id") or "").strip()
 
-                # Update delivery/read status for outgoing messages when Meta sends status events.
                 for status_item in value.get("statuses") or []:
                     meta_message_id = str(status_item.get("id") or "").strip()
                     status_name = str(status_item.get("status") or "").strip()
+                    errors = status_item.get("errors") or []
+                    error_text = None
+                    if errors:
+                        e = errors[0] or {}
+                        error_text = (e.get("title") or e.get("message") or "").strip() or None
                     if meta_message_id and status_name:
                         db.execute(
-                            "UPDATE wa_messages SET status=? WHERE meta_message_id=?",
-                            (status_name, meta_message_id),
+                            "UPDATE wa_messages SET status=?, status_error=? WHERE meta_message_id=?",
+                            (status_name, error_text, meta_message_id),
                         )
 
                 incoming_messages = value.get("messages") or []
@@ -1189,12 +1400,8 @@ def whatsapp_webhook():
                     """,
                     (meta_phone_number_id,),
                 ).fetchone()
-
                 if not wa_number:
-                    print(
-                        "WhatsApp webhook: no active wa_numbers row mapped to Meta phone_number_id",
-                        meta_phone_number_id,
-                    )
+                    print("WhatsApp webhook: no active number mapped to Phone Number ID", meta_phone_number_id)
                     continue
 
                 contact_names = {}
@@ -1206,8 +1413,6 @@ def whatsapp_webhook():
 
                 for message in incoming_messages:
                     meta_message_id = str(message.get("id") or "").strip()
-
-                    # Meta may retry delivery. Do not insert the same message twice.
                     if meta_message_id:
                         exists = db.execute(
                             "SELECT id FROM wa_messages WHERE meta_message_id=? LIMIT 1",
@@ -1219,109 +1424,66 @@ def whatsapp_webhook():
                     contact_wa_id = str(message.get("from") or "").strip()
                     if not contact_wa_id:
                         continue
-
                     contact_name = contact_names.get(contact_wa_id) or contact_wa_id
                     msg_type = str(message.get("type") or "unknown").strip()
-                    body, meta_media_id = _wa_message_summary(message)
+                    body, meta_media_id, media_mime_type, media_filename = _wa_message_summary(message)
                     sent_at = _wa_iso_from_unix(message.get("timestamp"))
                     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
                     conversation = db.execute(
                         """
-                        SELECT id
-                        FROM wa_conversations
+                        SELECT id FROM wa_conversations
                         WHERE wa_number_id=? AND contact_wa_id=?
-                        ORDER BY id DESC
-                        LIMIT 1
+                        ORDER BY id DESC LIMIT 1
                         """,
                         (wa_number["id"], contact_wa_id),
                     ).fetchone()
-
                     if conversation:
                         conversation_id = conversation["id"]
                         db.execute(
                             """
                             UPDATE wa_conversations
-                               SET contact_name=?,
-                                   last_message=?,
-                                   last_message_at=?,
-                                   unread_count=COALESCE(unread_count, 0) + 1,
+                               SET contact_name=?, last_message=?, last_message_at=?,
+                                   last_inbound_at=?, unread_count=COALESCE(unread_count,0)+1,
                                    updated_at=?
                              WHERE id=?
                             """,
-                            (
-                                contact_name,
-                                body,
-                                sent_at,
-                                now_iso,
-                                conversation_id,
-                            ),
+                            (contact_name, body, sent_at, sent_at, now_iso, conversation_id),
                         )
                     else:
                         cur = db.execute(
                             """
                             INSERT INTO wa_conversations (
-                                wa_number_id,
-                                contact_wa_id,
-                                contact_name,
-                                last_message,
-                                last_message_at,
-                                unread_count,
-                                updated_at
-                            )
-                            VALUES (?, ?, ?, ?, ?, 1, ?)
+                                wa_number_id, contact_wa_id, contact_name, last_message,
+                                last_message_at, last_inbound_at, unread_count, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
                             """,
-                            (
-                                wa_number["id"],
-                                contact_wa_id,
-                                contact_name,
-                                body,
-                                sent_at,
-                                now_iso,
-                            ),
+                            (wa_number["id"], contact_wa_id, contact_name, body, sent_at, sent_at, now_iso),
                         )
                         conversation_id = cur.lastrowid
 
                     db.execute(
                         """
                         INSERT INTO wa_messages (
-                            conversation_id,
-                            meta_message_id,
-                            direction,
-                            message_type,
-                            body,
-                            media_url,
-                            meta_media_id,
-                            sent_at,
-                            status,
-                            created_at
-                        )
-                        VALUES (?, ?, 'in', ?, ?, NULL, ?, ?, 'received', ?)
+                            conversation_id, meta_message_id, direction, message_type,
+                            body, media_url, meta_media_id, media_mime_type, media_filename,
+                            sent_at, status, status_error, sent_by_user_id,
+                            sent_by_username, created_at
+                        ) VALUES (?, ?, 'in', ?, ?, NULL, ?, ?, ?, ?, 'received', NULL, NULL, NULL, ?)
                         """,
-                        (
-                            conversation_id,
-                            meta_message_id or None,
-                            msg_type,
-                            body,
-                            meta_media_id,
-                            sent_at,
-                            now_iso,
-                        ),
+                        (conversation_id, meta_message_id or None, msg_type, body,
+                         meta_media_id, media_mime_type, media_filename, sent_at, now_iso),
                     )
-
         db.commit()
-
-    except Exception as e:
+    except Exception as exc:
         db.rollback()
-        print("WhatsApp webhook processing error:", repr(e))
-        # Non-2xx lets Meta retry the event.
+        print("WhatsApp webhook processing error:", repr(exc))
         return "Webhook processing failed", 500
-
     return "EVENT_RECEIVED", 200
 
 
 # =========================
-# WhatsApp branches - unified inbox
+# WhatsApp branches - operational unified inbox
 # =========================
 @app.route("/whatsapp")
 @login_required
@@ -1333,81 +1495,115 @@ def whatsapp_branches():
 
     db = get_db()
     ensure_whatsapp_schema(db)
+    allowed_ids = _wa_allowed_number_ids(db, require_reply=False)
+    reply_ids = set(_wa_allowed_number_ids(db, require_reply=True))
 
     selected_number = (request.args.get("number") or "all").strip()
     search_text = (request.args.get("q") or "").strip()
     conversation_id = (request.args.get("conversation") or "").strip()
 
-    numbers = db.execute("""
-        SELECT id, label, branch_code, phone_number, meta_phone_number_id, is_active, sort_order
-        FROM wa_numbers
-        WHERE is_active = 1
-        ORDER BY sort_order ASC, id ASC
-    """).fetchall()
+    if not allowed_ids:
+        numbers = []
+        conversations = []
+    else:
+        placeholders = ",".join(["?"] * len(allowed_ids))
+        numbers = db.execute(
+            f"""
+            SELECT id, label, branch_code, phone_number, meta_phone_number_id, is_active, sort_order
+            FROM wa_numbers
+            WHERE is_active=1 AND id IN ({placeholders})
+            ORDER BY sort_order ASC, id ASC
+            """,
+            allowed_ids,
+        ).fetchall()
 
-    where = ["1=1"]
-    params = []
-    if selected_number != "all":
-        try:
-            where.append("c.wa_number_id=?")
-            params.append(int(selected_number))
-        except ValueError:
-            selected_number = "all"
+        where = [f"c.wa_number_id IN ({placeholders})"]
+        params = list(allowed_ids)
+        if selected_number != "all":
+            try:
+                selected_id = int(selected_number)
+                if selected_id in allowed_ids:
+                    where.append("c.wa_number_id=?")
+                    params.append(selected_id)
+                else:
+                    selected_number = "all"
+            except ValueError:
+                selected_number = "all"
+        if search_text:
+            where.append("(COALESCE(c.contact_name,'') LIKE ? OR COALESCE(c.contact_wa_id,'') LIKE ? OR COALESCE(c.last_message,'') LIKE ?)")
+            term = f"%{search_text}%"
+            params.extend([term, term, term])
 
-    if search_text:
-        where.append("(COALESCE(c.contact_name,'') LIKE ? OR COALESCE(c.contact_wa_id,'') LIKE ? OR COALESCE(c.last_message,'') LIKE ?)")
-        term = f"%{search_text}%"
-        params.extend([term, term, term])
-
-    conversations = db.execute(f"""
-        SELECT c.id,
-               c.wa_number_id,
-               c.contact_wa_id,
-               c.contact_name,
-               c.last_message,
-               c.last_message_at,
-               c.unread_count,
-               n.label AS number_label,
-               n.branch_code
-        FROM wa_conversations c
-        JOIN wa_numbers n ON n.id=c.wa_number_id
-        WHERE {' AND '.join(where)}
-        ORDER BY COALESCE(c.last_message_at, c.updated_at) DESC, c.id DESC
-        LIMIT 300
-    """, params).fetchall()
+        conversations = db.execute(
+            f"""
+            SELECT c.id, c.wa_number_id, c.contact_wa_id, c.contact_name,
+                   c.last_message, c.last_message_at, c.last_inbound_at,
+                   c.unread_count, n.label AS number_label, n.branch_code
+            FROM wa_conversations c
+            JOIN wa_numbers n ON n.id=c.wa_number_id
+            WHERE {' AND '.join(where)}
+            ORDER BY COALESCE(c.last_message_at, c.updated_at) DESC, c.id DESC
+            LIMIT 300
+            """,
+            params,
+        ).fetchall()
 
     active_conversation = None
     messages = []
+    can_reply_active = False
+    freeform_open = False
+    freeform_expires_at = None
+    latest_message_id = 0
+
     if conversation_id:
         try:
             cid = int(conversation_id)
-            active_conversation = db.execute("""
-                SELECT c.*, n.label AS number_label, n.branch_code
-                FROM wa_conversations c
-                JOIN wa_numbers n ON n.id=c.wa_number_id
-                WHERE c.id=?
-            """, (cid,)).fetchone()
-
+            if allowed_ids:
+                placeholders = ",".join(["?"] * len(allowed_ids))
+                active_conversation = db.execute(
+                    f"""
+                    SELECT c.*, n.label AS number_label, n.branch_code,
+                           n.meta_phone_number_id, n.phone_number AS business_phone
+                    FROM wa_conversations c
+                    JOIN wa_numbers n ON n.id=c.wa_number_id
+                    WHERE c.id=? AND c.wa_number_id IN ({placeholders})
+                    """,
+                    [cid] + list(allowed_ids),
+                ).fetchone()
             if active_conversation:
-                messages = db.execute("""
-                    SELECT id, direction, message_type, body, media_url, sent_at, status
+                messages = db.execute(
+                    """
+                    SELECT id, meta_message_id, direction, message_type, body, media_url,
+                           meta_media_id, media_mime_type, media_filename, sent_at, status,
+                           status_error, sent_by_user_id, sent_by_username
                     FROM wa_messages
                     WHERE conversation_id=?
                     ORDER BY COALESCE(sent_at, created_at) ASC, id ASC
-                    LIMIT 1000
-                """, (cid,)).fetchall()
-
-                # Opening the conversation marks its local unread counter as read.
-                db.execute(
-                    "UPDATE wa_conversations SET unread_count=0 WHERE id=?",
+                    LIMIT 1200
+                    """,
                     (cid,),
-                )
+                ).fetchall()
+                latest_message_id = int(messages[-1]["id"]) if messages else 0
+                can_reply_active = int(active_conversation["wa_number_id"]) in reply_ids
+                freeform_open, freeform_expires_at = _wa_freeform_open(active_conversation["last_inbound_at"])
+
+                latest_incoming = db.execute(
+                    """
+                    SELECT meta_message_id FROM wa_messages
+                    WHERE conversation_id=? AND direction='in' AND meta_message_id IS NOT NULL
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (cid,),
+                ).fetchone()
+                db.execute("UPDATE wa_conversations SET unread_count=0 WHERE id=?", (cid,))
                 db.commit()
+                if latest_incoming and active_conversation["meta_phone_number_id"]:
+                    _wa_mark_read(active_conversation["meta_phone_number_id"], latest_incoming["meta_message_id"])
         except ValueError:
             pass
 
-    connected_count = sum(1 for n in numbers if (n["meta_phone_number_id"] or "").strip())
-    total_unread = sum(int(c["unread_count"] or 0) for c in conversations)
+    connected_count = sum(1 for n in numbers if (n["meta_phone_number_id"] or "").strip()) if numbers else 0
+    total_unread = sum(int(c["unread_count"] or 0) for c in conversations) if conversations else 0
 
     return render_template(
         "whatsapp_branches.html",
@@ -1420,7 +1616,215 @@ def whatsapp_branches():
         connected_count=connected_count,
         total_unread=total_unread,
         can_manage_numbers=(is_master or bool(perms.get("whatsapp_numbers_manage"))),
+        can_reply_active=can_reply_active,
+        freeform_open=freeform_open,
+        freeform_expires_at=freeform_expires_at,
+        latest_message_id=latest_message_id,
+        api_ready=bool(_wa_access_token()),
     )
+
+
+@app.route("/whatsapp/conversation/<int:conversation_id>/send", methods=["POST"])
+@login_required
+def whatsapp_send_message(conversation_id):
+    db = get_db()
+    ensure_whatsapp_schema(db)
+    reply_ids = _wa_allowed_number_ids(db, require_reply=True)
+    if not reply_ids:
+        return render_template("no_permission.html"), 403
+
+    placeholders = ",".join(["?"] * len(reply_ids))
+    conv = db.execute(
+        f"""
+        SELECT c.*, n.label AS number_label, n.meta_phone_number_id
+        FROM wa_conversations c
+        JOIN wa_numbers n ON n.id=c.wa_number_id
+        WHERE c.id=? AND c.wa_number_id IN ({placeholders})
+        """,
+        [conversation_id] + list(reply_ids),
+    ).fetchone()
+    if not conv:
+        return render_template("no_permission.html"), 403
+    if not (conv["meta_phone_number_id"] or "").strip():
+        flash("هذا الرقم لم يتم ربط Meta Phone Number ID له بعد", "danger")
+        return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+    if not _wa_access_token():
+        flash("أضف WHATSAPP_META_ACCESS_TOKEN في Render أولاً", "danger")
+        return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+
+    freeform_open, _ = _wa_freeform_open(conv["last_inbound_at"])
+    if not freeform_open:
+        flash("انتهت نافذة خدمة العميل (24 ساعة). لا يمكن إرسال رسالة عادية؛ يلزم قالب WhatsApp معتمد.", "warning")
+        return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+
+    text_body = (request.form.get("message") or "").strip()
+    attachment = request.files.get("attachment")
+    has_attachment = bool(attachment and attachment.filename)
+    if not text_body and not has_attachment:
+        flash("اكتب رسالة أو اختر مرفقاً", "warning")
+        return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+
+    phone_number_id = (conv["meta_phone_number_id"] or "").strip()
+    recipient = (conv["contact_wa_id"] or "").strip()
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    message_type = "text"
+    media_id = None
+    media_mime = None
+    media_filename = None
+    display_body = text_body
+
+    if has_attachment:
+        media_id, media_mime, media_filename, err = _wa_upload_media(phone_number_id, attachment)
+        if err:
+            flash(f"تعذر رفع المرفق إلى Meta: {err}", "danger")
+            return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+
+        if media_mime.startswith("image/"):
+            message_type = "image"
+        elif media_mime.startswith("video/"):
+            message_type = "video"
+        elif media_mime.startswith("audio/"):
+            message_type = "audio"
+        else:
+            message_type = "document"
+
+        media_obj = {"id": media_id}
+        if message_type in ("image", "video") and text_body:
+            media_obj["caption"] = text_body
+        if message_type == "document":
+            media_obj["filename"] = media_filename
+            if text_body:
+                media_obj["caption"] = text_body
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": recipient,
+            "type": message_type,
+            message_type: media_obj,
+        }
+        labels = {"image":"📷 صورة", "video":"🎥 فيديو", "audio":"🎵 رسالة صوتية", "document":"📄 مستند"}
+        display_body = labels[message_type]
+        if text_body:
+            display_body += f": {text_body}"
+        elif media_filename and message_type == "document":
+            display_body += f": {media_filename}"
+    else:
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": recipient,
+            "type": "text",
+            "text": {"preview_url": True, "body": text_body},
+        }
+
+    meta_message_id, err = _wa_send_payload(phone_number_id, payload)
+    if err:
+        flash(f"تعذر إرسال الرسالة: {err}", "danger")
+        return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+
+    username = session.get("username") or ""
+    user_id = session.get("user_id")
+    db.execute(
+        """
+        INSERT INTO wa_messages (
+            conversation_id, meta_message_id, direction, message_type, body,
+            media_url, meta_media_id, media_mime_type, media_filename,
+            sent_at, status, status_error, sent_by_user_id, sent_by_username, created_at
+        ) VALUES (?, ?, 'out', ?, ?, NULL, ?, ?, ?, ?, 'sent', NULL, ?, ?, ?)
+        """,
+        (conversation_id, meta_message_id, message_type, display_body, media_id,
+         media_mime, media_filename, now_iso, user_id, username, now_iso),
+    )
+    db.execute(
+        """
+        UPDATE wa_conversations
+           SET last_message=?, last_message_at=?, updated_at=?
+         WHERE id=?
+        """,
+        (display_body, now_iso, now_iso, conversation_id),
+    )
+    db.commit()
+    return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+
+
+@app.route("/whatsapp/media/<int:message_id>")
+@login_required
+def whatsapp_media(message_id):
+    db = get_db()
+    ensure_whatsapp_schema(db)
+    allowed_ids = _wa_allowed_number_ids(db, require_reply=False)
+    if not allowed_ids:
+        return render_template("no_permission.html"), 403
+
+    placeholders = ",".join(["?"] * len(allowed_ids))
+    row = db.execute(
+        f"""
+        SELECT m.id, m.message_type, m.meta_media_id, m.media_mime_type, m.media_filename,
+               c.wa_number_id, n.meta_phone_number_id
+        FROM wa_messages m
+        JOIN wa_conversations c ON c.id=m.conversation_id
+        JOIN wa_numbers n ON n.id=c.wa_number_id
+        WHERE m.id=? AND c.wa_number_id IN ({placeholders})
+        """,
+        [message_id] + list(allowed_ids),
+    ).fetchone()
+    if not row or not row["meta_media_id"]:
+        return "Media not found", 404
+
+    info, err = _wa_graph_request(
+        "GET",
+        f"{row['meta_media_id']}?phone_number_id={row['meta_phone_number_id']}",
+    )
+    if err or not info or not info.get("url"):
+        return f"تعذر جلب المرفق من Meta: {err or 'Media URL غير متوفر'}", 502
+
+    raw, err = _wa_graph_request("GET", info["url"], timeout=45)
+    if err or not raw or "raw" not in raw:
+        return f"تعذر تنزيل المرفق من Meta: {err or 'خطأ غير معروف'}", 502
+
+    content = raw["raw"]
+    mime = row["media_mime_type"] or info.get("mime_type") or raw.get("content_type") or "application/octet-stream"
+    filename = row["media_filename"] or f"whatsapp-{message_id}"
+    as_attachment = row["message_type"] == "document"
+    return send_file(
+        BytesIO(content),
+        mimetype=mime,
+        as_attachment=as_attachment,
+        download_name=filename,
+        max_age=60,
+    )
+
+
+@app.route("/whatsapp/api/state")
+@login_required
+def whatsapp_api_state():
+    db = get_db()
+    ensure_whatsapp_schema(db)
+    allowed_ids = _wa_allowed_number_ids(db, require_reply=False)
+    if not allowed_ids:
+        return {"total_unread": 0, "latest_message_id": 0}
+    placeholders = ",".join(["?"] * len(allowed_ids))
+    unread = db.execute(
+        f"SELECT COALESCE(SUM(unread_count),0) AS c FROM wa_conversations WHERE wa_number_id IN ({placeholders})",
+        allowed_ids,
+    ).fetchone()["c"]
+    latest_id = 0
+    conv_id = request.args.get("conversation")
+    if conv_id:
+        try:
+            cid = int(conv_id)
+            row = db.execute(
+                f"""
+                SELECT COALESCE(MAX(m.id),0) AS mid
+                FROM wa_messages m JOIN wa_conversations c ON c.id=m.conversation_id
+                WHERE c.id=? AND c.wa_number_id IN ({placeholders})
+                """,
+                [cid] + list(allowed_ids),
+            ).fetchone()
+            latest_id = int(row["mid"] or 0)
+        except ValueError:
+            pass
+    return {"total_unread": int(unread or 0), "latest_message_id": latest_id}
 
 
 @app.route("/whatsapp/numbers", methods=["GET", "POST"])
@@ -1436,17 +1840,12 @@ def whatsapp_numbers_manage():
 
     if request.method == "POST":
         action = (request.form.get("action") or "").strip()
-
         if action == "update_number":
             try:
                 number_id = int(request.form.get("number_id", "0") or 0)
             except ValueError:
                 number_id = 0
-
-            row = db.execute(
-                "SELECT id FROM wa_numbers WHERE id=?",
-                (number_id,),
-            ).fetchone()
+            row = db.execute("SELECT id FROM wa_numbers WHERE id=?", (number_id,)).fetchone()
             if not row:
                 flash("رقم واتساب غير موجود", "danger")
                 return redirect(url_for("whatsapp_numbers_manage"))
@@ -1455,61 +1854,97 @@ def whatsapp_numbers_manage():
             branch_code = (request.form.get("branch_code") or "").strip()
             phone_number = (request.form.get("phone_number") or "").strip()
             meta_phone_number_id = (request.form.get("meta_phone_number_id") or "").strip()
-
             if not label:
                 flash("اسم الرقم مطلوب", "warning")
                 return redirect(url_for("whatsapp_numbers_manage"))
-
             try:
                 sort_order = int(request.form.get("sort_order", "0") or 0)
             except ValueError:
                 sort_order = 0
             sort_order = max(0, min(sort_order, 9999))
-
             is_active = 1 if request.form.get("is_active") == "on" else 0
-
             db.execute(
                 """
                 UPDATE wa_numbers
-                   SET label=?,
-                       branch_code=?,
-                       phone_number=?,
-                       meta_phone_number_id=?,
-                       sort_order=?,
-                       is_active=?
+                   SET label=?, branch_code=?, phone_number=?, meta_phone_number_id=?,
+                       sort_order=?, is_active=?
                  WHERE id=?
                 """,
-                (
-                    label,
-                    branch_code,
-                    phone_number,
-                    meta_phone_number_id,
-                    sort_order,
-                    is_active,
-                    number_id,
-                ),
+                (label, branch_code, phone_number, meta_phone_number_id,
+                 sort_order, is_active, number_id),
             )
             db.commit()
             flash(f"تم تحديث {label} بنجاح", "success")
             return redirect(url_for("whatsapp_numbers_manage"))
 
+        if action == "save_number_access":
+            try:
+                uid = int(request.form.get("user_id", "0") or 0)
+            except ValueError:
+                uid = 0
+            user = db.execute("SELECT id, username FROM users WHERE id=?", (uid,)).fetchone()
+            if not user or user["username"] == MASTER_USERNAME:
+                flash("المستخدم غير صالح لتخصيص أرقام واتساب", "warning")
+                return redirect(url_for("whatsapp_numbers_manage"))
+
+            all_numbers = db.execute("SELECT id FROM wa_numbers ORDER BY id").fetchall()
+            now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            for n in all_numbers:
+                nid = int(n["id"])
+                can_view = 1 if request.form.get(f"view_{nid}") == "on" else 0
+                can_reply = 1 if request.form.get(f"reply_{nid}") == "on" else 0
+                if can_reply:
+                    can_view = 1
+                db.execute(
+                    """
+                    INSERT INTO wa_number_permissions (user_id, wa_number_id, can_view, can_reply, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(user_id, wa_number_id)
+                    DO UPDATE SET can_view=excluded.can_view,
+                                  can_reply=excluded.can_reply,
+                                  updated_at=excluded.updated_at
+                    """,
+                    (uid, nid, can_view, can_reply, now_iso),
+                )
+            db.commit()
+            flash(f"تم تحديث صلاحيات أرقام واتساب للمستخدم {user['username']}", "success")
+            return redirect(url_for("whatsapp_numbers_manage") + f"#user-{uid}")
+
     numbers = db.execute(
         """
         SELECT id, label, branch_code, phone_number, meta_phone_number_id,
                is_active, sort_order, created_at
-          FROM wa_numbers
-         ORDER BY sort_order ASC, id ASC
+        FROM wa_numbers ORDER BY sort_order ASC, id ASC
         """
     ).fetchall()
+    users = db.execute(
+        "SELECT id, username FROM users WHERE username<>? ORDER BY username COLLATE NOCASE",
+        (MASTER_USERNAME,),
+    ).fetchall()
+    access_rows = db.execute(
+        "SELECT user_id, wa_number_id, can_view, can_reply FROM wa_number_permissions"
+    ).fetchall()
+    access_map = {}
+    configured_users = set()
+    for r in access_rows:
+        configured_users.add(int(r["user_id"]))
+        access_map[(int(r["user_id"]), int(r["wa_number_id"]))] = {
+            "can_view": bool(r["can_view"]),
+            "can_reply": bool(r["can_reply"]),
+        }
 
     return render_template(
         "whatsapp_numbers_manage.html",
         numbers=numbers,
+        users=users,
+        access_map=access_map,
+        configured_users=configured_users,
         webhook_callback_url=request.url_root.rstrip("/") + url_for("whatsapp_webhook"),
         webhook_verify_token_is_set=bool(_wa_webhook_verify_token()),
         webhook_app_secret_is_set=bool(_wa_meta_app_secret()),
+        whatsapp_access_token_is_set=bool(_wa_access_token()),
+        whatsapp_graph_version=_wa_graph_version(),
     )
-
 
 # =========================
 # Follow-up Dashboard (Power BI)

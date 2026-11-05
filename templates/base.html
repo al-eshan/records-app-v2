@@ -307,6 +307,9 @@
             class="menu-card menu-card-whatsapp {% if request.path.startswith('/whatsapp') %}active{% endif %}"
           >
             💬 واتساب الفروع
+            {% if whatsapp_unread_count|default(0) > 0 %}
+              <span class="badge rounded-pill bg-danger ms-1">{{ whatsapp_unread_count }}</span>
+            {% endif %}
           </a>
 
         {% endif %}
