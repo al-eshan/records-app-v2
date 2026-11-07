@@ -377,6 +377,9 @@
           <span class="text-muted">إرسال واستقبال ومتابعة أرقام واتساب من نظام آل عشان</span>
         </div>
         <div class="d-flex gap-2 flex-wrap mobile-stack">
+          {% if reply_number_ids %}
+            <button class="btn btn-success btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#waNewChatModal">＋ دردشة جديدة</button>
+          {% endif %}
           {% if can_manage_numbers %}
             <a class="btn btn-secondary btn-sm" href="{{ url_for('whatsapp_numbers_manage') }}">⚙️ إدارة الأرقام</a>
           {% endif %}
@@ -506,7 +509,32 @@
                   <div class="small text-muted mt-1" id="waFileName"></div>
                 </div>
               {% else %}
-                <div class="wa-closed">⏱️ انتهت نافذة الـ24 ساعة. الرسالة العادية غير مسموحة؛ المرحلة التالية ستضيف إرسال القوالب المعتمدة.</div>
+                <div class="wa-composer">
+                  <div class="wa-window-note" style="color:#ffc107;">⏱️ لا توجد نافذة خدمة مفتوحة. ابدأ بقالب WhatsApp معتمد، وبعد رد العميل يمكنك الكتابة بحرية لمدة 24 ساعة.</div>
+                  {% if template_load_error %}
+                    <div class="alert alert-warning py-2 mb-2">{{ template_load_error }}</div>
+                  {% elif approved_templates %}
+                    <form method="post" action="{{ url_for('whatsapp_send_template', conversation_id=active_conversation['id']) }}" class="row g-2 align-items-end">
+                      <div class="col-md-5">
+                        <label class="form-label small">القالب المعتمد</label>
+                        <select class="form-select" name="template_id" id="waTemplateSelect" required>
+                          <option value="">اختر القالب...</option>
+                          {% for t in approved_templates %}
+                            <option value="{{ t['id'] }}" data-count="{{ t['param_count'] }}" data-body="{{ t['body']|e }}">{{ t['name'] }}{% if t['language'] %} — {{ t['language'] }}{% endif %}{% if t['category'] %} — {{ t['category'] }}{% endif %}</option>
+                          {% endfor %}
+                        </select>
+                      </div>
+                      <div class="col-md-5">
+                        <label class="form-label small">قيم المتغيرات</label>
+                        <input class="form-control" name="template_params" id="waTemplateParams" placeholder="مثال: عبدالرحمن | رقم الطلب 123">
+                        <div class="small text-muted mt-1" id="waTemplateHint">اتركها فارغة إذا القالب بدون متغيرات. افصل القيم بعلامة |</div>
+                      </div>
+                      <div class="col-md-2 d-grid"><button class="btn btn-primary" type="submit">إرسال القالب</button></div>
+                    </form>
+                  {% else %}
+                    <div class="alert alert-info py-2 mb-0">لا توجد قوالب نصية معتمدة حاليًا في Gupshup. أنشئ قالبًا من تبويب Templates ثم اعمل Sync.</div>
+                  {% endif %}
+                </div>
               {% endif %}
             {% elif not can_reply_active %}
               <div class="wa-closed">👁️ لديك صلاحية عرض هذه المحادثة فقط، بدون رد.</div>
@@ -525,6 +553,46 @@
   </div>
 </div>
 
+{% if reply_number_ids %}
+<div class="modal fade" id="waNewChatModal" tabindex="-1" aria-hidden="true" dir="rtl">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:var(--card-bg);color:#fff;border:1px solid var(--glass-border);">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title">دردشة واتساب جديدة</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+      </div>
+      <form method="post" action="{{ url_for('whatsapp_new_conversation') }}">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">الإرسال من</label>
+            <select class="form-select" name="wa_number_id" required>
+              {% for n in numbers %}
+                {% if n['id'] in reply_number_ids %}
+                  <option value="{{ n['id'] }}">{{ n['label'] }}{% if n['phone_number'] %} — {{ n['phone_number'] }}{% endif %}</option>
+                {% endif %}
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">رقم جوال العميل</label>
+            <input class="form-control" name="phone" dir="ltr" placeholder="05xxxxxxxx أو 9665xxxxxxxx" inputmode="tel" required>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">اسم العميل <span class="text-muted">(اختياري)</span></label>
+            <input class="form-control" name="contact_name" placeholder="اسم العميل">
+          </div>
+          <div class="small text-warning mt-3">إذا لم يرسل العميل لك خلال آخر 24 ساعة، يجب بدء المحادثة بقالب WhatsApp معتمد.</div>
+        </div>
+        <div class="modal-footer border-secondary">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+          <button type="submit" class="btn btn-success">فتح المحادثة</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <script>
 (function(){
   const chat = document.getElementById('waChatBody');
@@ -532,6 +600,20 @@
   const file = document.getElementById('waAttachment');
   const fileName = document.getElementById('waFileName');
   if (file && fileName) file.addEventListener('change', () => { fileName.textContent = file.files.length ? ('المرفق: ' + file.files[0].name) : ''; });
+  const tpl = document.getElementById('waTemplateSelect');
+  const tplHint = document.getElementById('waTemplateHint');
+  const tplParams = document.getElementById('waTemplateParams');
+  if (tpl && tplHint && tplParams) {
+    const syncTplHint = () => {
+      const opt = tpl.options[tpl.selectedIndex];
+      const count = Number(opt?.dataset?.count || 0);
+      const body = opt?.dataset?.body || '';
+      tplParams.required = count > 0;
+      tplParams.placeholder = count > 0 ? (`أدخل ${count} قيمة وافصل بينها بـ |`) : 'لا توجد متغيرات مطلوبة';
+      tplHint.textContent = body ? ((count ? `عدد المتغيرات: ${count} — ` : '') + body) : (count ? `هذا القالب يحتاج ${count} قيمة` : 'القالب بدون متغيرات');
+    };
+    tpl.addEventListener('change', syncTplHint); syncTplHint();
+  }
   {% if active_conversation %}
   const currentLatest = {{ latest_message_id|default(0) }};
   setInterval(async () => {

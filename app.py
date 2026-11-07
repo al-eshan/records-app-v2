@@ -10,6 +10,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import time
+import re
 
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
@@ -1172,6 +1173,134 @@ def _gupshup_any_api_ready():
                for k, v in os.environ.items())
 
 
+def _wa_normalize_destination(value):
+    """Normalize customer phone to international digits; Saudi local numbers are auto-expanded."""
+    digits = _wa_digits(value)
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if digits.startswith("05") and len(digits) == 10:
+        digits = "966" + digits[1:]
+    elif digits.startswith("5") and len(digits) == 9:
+        digits = "966" + digits
+    if not (8 <= len(digits) <= 15):
+        return ""
+    return digits
+
+
+def _gupshup_extract_template_list(data):
+    """Best-effort parser for Gupshup template-list response shapes."""
+    if isinstance(data, list):
+        if all(isinstance(x, dict) for x in data):
+            return data
+        return []
+    if not isinstance(data, dict):
+        return []
+    preferred = ("templates", "templateList", "template_list", "data", "items", "results")
+    for key in preferred:
+        value = data.get(key)
+        if isinstance(value, list) and all(isinstance(x, dict) for x in value):
+            return value
+        if isinstance(value, dict):
+            nested = _gupshup_extract_template_list(value)
+            if nested:
+                return nested
+    for value in data.values():
+        if isinstance(value, dict):
+            nested = _gupshup_extract_template_list(value)
+            if nested:
+                return nested
+    return []
+
+
+def _gupshup_get_approved_text_templates(branch_code=None):
+    api_key = _gupshup_api_key(branch_code)
+    app_id = _gupshup_app_id(branch_code)
+    if not api_key or not app_id:
+        return [], "أضف GUPSHUP_APP_ID في Render لعرض القوالب المعتمدة"
+    qs = urllib.parse.urlencode({
+        "pageNo": 0,
+        "pageSize": 100,
+        "templateStatus": "APPROVED",
+        "templateType": "TEXT",
+    })
+    url = f"https://api.gupshup.io/wa/app/{urllib.parse.quote(app_id)}/template?{qs}"
+    req = urllib.request.Request(url, headers={"apikey": api_key, "Accept": "application/json"}, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        data = json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        return [], f"تعذر جلب القوالب من Gupshup (HTTP {exc.code}): {raw[:180]}"
+    except Exception as exc:
+        return [], f"تعذر جلب القوالب من Gupshup: {exc}"
+
+    rows = _gupshup_extract_template_list(data)
+    out = []
+    for t in rows:
+        tid = str(t.get("id") or t.get("templateId") or t.get("template_id") or "").strip()
+        if not tid:
+            continue
+        name = str(t.get("elementName") or t.get("templateName") or t.get("name") or tid).strip()
+        language = str(t.get("languageCode") or t.get("language") or t.get("lang") or "").strip()
+        category = str(t.get("category") or t.get("templateCategory") or "").strip()
+        body = str(t.get("body") or t.get("templateBody") or t.get("content") or t.get("text") or "").strip()
+        nums = [int(x) for x in re.findall(r"\{\{(\d+)\}\}", body)]
+        param_count = max(nums) if nums else 0
+        out.append({
+            "id": tid, "name": name, "language": language, "category": category,
+            "body": body, "param_count": param_count,
+        })
+    out.sort(key=lambda x: (x["name"].lower(), x["language"]))
+    return out, None
+
+
+def _gupshup_post_template(branch_code, source_number, destination, template_id, params=None):
+    """Send an approved Gupshup template message to start/reopen a conversation."""
+    api_key = _gupshup_api_key(branch_code)
+    source = _gupshup_source_number(branch_code, source_number)
+    app_name = _gupshup_app_name(branch_code)
+    destination = _wa_normalize_destination(destination)
+    if not api_key:
+        return None, "GUPSHUP_API_KEY غير مضبوط في Render"
+    if not source:
+        return None, "رقم المصدر في Gupshup غير مضبوط"
+    if not destination:
+        return None, "رقم العميل غير صالح"
+    form = {
+        "channel": "whatsapp",
+        "source": source,
+        "destination": destination,
+        "src.name": app_name,
+        "template": json.dumps({"id": template_id, "params": list(params or [])}, ensure_ascii=False),
+    }
+    body = urllib.parse.urlencode(form).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.gupshup.io/wa/api/v1/template/msg",
+        data=body,
+        headers={"apikey": api_key, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        data = json.loads(raw) if raw else {}
+        if str(data.get("status") or "").lower() == "error":
+            return None, str(data.get("message") or "Gupshup رفض القالب")
+        mid = str(data.get("messageId") or data.get("message_id") or "").strip()
+        return (mid or None), (None if mid else f"Gupshup لم يُرجع Message ID. response={raw[:250]}")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            data = json.loads(raw)
+            msg = data.get("message") or data.get("error") or raw
+        except Exception:
+            msg = raw
+        return None, f"Gupshup HTTP {exc.code}: {msg}"
+    except Exception as exc:
+        return None, f"تعذر الاتصال بـ Gupshup: {exc}"
+
+
 def _gupshup_post_message(branch_code, source_number, destination, message_obj):
     """Send a WhatsApp session message through Gupshup Self-Serve v1 API."""
     api_key = _gupshup_api_key(branch_code)
@@ -1920,6 +2049,8 @@ def whatsapp_branches():
     freeform_open = False
     freeform_expires_at = None
     latest_message_id = 0
+    approved_templates = []
+    template_load_error = None
 
     if conversation_id:
         try:
@@ -1952,6 +2083,8 @@ def whatsapp_branches():
                 latest_message_id = int(messages[-1]["id"]) if messages else 0
                 can_reply_active = int(active_conversation["wa_number_id"]) in reply_ids
                 freeform_open, freeform_expires_at = _wa_freeform_open(active_conversation["last_inbound_at"])
+                if can_reply_active and not freeform_open:
+                    approved_templates, template_load_error = _gupshup_get_approved_text_templates(active_conversation["branch_code"] or "")
 
                 latest_incoming = db.execute(
                     """
@@ -1987,7 +2120,131 @@ def whatsapp_branches():
         freeform_expires_at=freeform_expires_at,
         latest_message_id=latest_message_id,
         api_ready=bool(_wa_access_token() or _gupshup_any_api_ready()),
+        reply_number_ids=list(reply_ids),
+        approved_templates=approved_templates,
+        template_load_error=template_load_error,
     )
+
+
+@app.route("/whatsapp/new", methods=["POST"])
+@login_required
+def whatsapp_new_conversation():
+    db = get_db()
+    ensure_whatsapp_schema(db)
+    reply_ids = _wa_allowed_number_ids(db, require_reply=True)
+    if not reply_ids:
+        return render_template("no_permission.html"), 403
+    try:
+        wa_number_id = int(request.form.get("wa_number_id") or 0)
+    except ValueError:
+        wa_number_id = 0
+    if wa_number_id not in reply_ids:
+        flash("ليس لديك صلاحية الرد من رقم واتساب المحدد", "danger")
+        return redirect(url_for("whatsapp_branches"))
+
+    phone = _wa_normalize_destination(request.form.get("phone"))
+    contact_name = (request.form.get("contact_name") or "").strip()
+    if not phone:
+        flash("أدخل رقم جوال صحيحًا مع مفتاح الدولة، أو رقم سعودي يبدأ بـ 05", "warning")
+        return redirect(url_for("whatsapp_branches"))
+
+    n = db.execute("SELECT id, phone_number FROM wa_numbers WHERE id=? AND is_active=1", (wa_number_id,)).fetchone()
+    if not n:
+        flash("رقم واتساب المرسل غير متاح", "danger")
+        return redirect(url_for("whatsapp_branches"))
+    if _wa_digits(n["phone_number"]) == phone:
+        flash("لا يمكن فتح محادثة مع نفس رقم المؤسسة", "warning")
+        return redirect(url_for("whatsapp_branches"))
+
+    row = db.execute(
+        "SELECT id, contact_name FROM wa_conversations WHERE wa_number_id=? AND contact_wa_id=? LIMIT 1",
+        (wa_number_id, phone),
+    ).fetchone()
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if row:
+        cid = int(row["id"])
+        if contact_name and contact_name != (row["contact_name"] or ""):
+            db.execute("UPDATE wa_conversations SET contact_name=?, updated_at=? WHERE id=?", (contact_name, now_iso, cid))
+            db.commit()
+    else:
+        cur = db.execute(
+            """
+            INSERT INTO wa_conversations
+                (wa_number_id, contact_wa_id, contact_name, last_message, last_message_at, last_inbound_at, unread_count, updated_at)
+            VALUES (?, ?, ?, ?, NULL, NULL, 0, ?)
+            """,
+            (wa_number_id, phone, contact_name or None, "محادثة جديدة — لم يتم إرسال رسالة بعد", now_iso),
+        )
+        db.commit()
+        cid = int(cur.lastrowid)
+        flash("تم فتح المحادثة. إذا لم يرسل العميل خلال آخر 24 ساعة فابدأ بقالب WhatsApp معتمد.", "success")
+    return redirect(url_for("whatsapp_branches", conversation=cid, number=wa_number_id))
+
+
+@app.route("/whatsapp/conversation/<int:conversation_id>/send-template", methods=["POST"])
+@login_required
+def whatsapp_send_template(conversation_id):
+    db = get_db()
+    ensure_whatsapp_schema(db)
+    reply_ids = _wa_allowed_number_ids(db, require_reply=True)
+    if not reply_ids:
+        return render_template("no_permission.html"), 403
+    placeholders = ",".join(["?"] * len(reply_ids))
+    conv = db.execute(
+        f"""
+        SELECT c.*, n.label AS number_label, n.branch_code, n.phone_number
+        FROM wa_conversations c JOIN wa_numbers n ON n.id=c.wa_number_id
+        WHERE c.id=? AND c.wa_number_id IN ({placeholders})
+        """,
+        [conversation_id] + list(reply_ids),
+    ).fetchone()
+    if not conv:
+        return render_template("no_permission.html"), 403
+
+    template_id = (request.form.get("template_id") or "").strip()
+    params_raw = (request.form.get("template_params") or "").strip()
+    params = [x.strip() for x in params_raw.split("|")] if params_raw else []
+    approved, err = _gupshup_get_approved_text_templates(conv["branch_code"] or "")
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+    allowed = {t["id"]: t for t in approved}
+    selected = allowed.get(template_id)
+    if not selected:
+        flash("اختر قالبًا معتمدًا من Gupshup", "warning")
+        return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+    expected = int(selected.get("param_count") or 0)
+    if expected and len(params) != expected:
+        flash(f"هذا القالب يحتاج {expected} قيمة للمتغيرات. افصل القيم بعلامة |", "warning")
+        return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+
+    mid, send_err = _gupshup_post_template(
+        conv["branch_code"] or "", conv["phone_number"], conv["contact_wa_id"], template_id, params
+    )
+    if send_err:
+        flash(f"تعذر إرسال القالب: {send_err}", "danger")
+        return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    display = f"📨 قالب: {selected['name']}"
+    if params:
+        display += " — " + " | ".join(params)
+    db.execute(
+        """
+        INSERT INTO wa_messages
+            (conversation_id, meta_message_id, direction, message_type, body, sent_at, status,
+             sent_by_user_id, sent_by_username, created_at)
+        VALUES (?, ?, 'out', 'template', ?, ?, 'submitted', ?, ?, ?)
+        """,
+        (conversation_id, mid, display, now_iso, session.get("user_id"), session.get("username") or "", now_iso),
+    )
+    db.execute(
+        "UPDATE wa_conversations SET last_message=?, last_message_at=?, updated_at=? WHERE id=?",
+        (display, now_iso, now_iso, conversation_id),
+    )
+    db.commit()
+    flash("تم إرسال القالب لبدء المحادثة. بعد رد العميل يمكنك الكتابة بحرية لمدة 24 ساعة.", "success")
+    return redirect(url_for("whatsapp_branches", conversation=conversation_id))
 
 
 @app.route("/whatsapp/conversation/<int:conversation_id>/send", methods=["POST"])
