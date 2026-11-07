@@ -113,7 +113,7 @@
       <div class="page-titlebar d-flex justify-content-between align-items-start flex-wrap gap-2">
         <div>
           <h3 class="m-0">إدارة أرقام واتساب</h3>
-          <span class="text-muted">إعداد أرقام الفروع وربط Meta وصلاحيات الموظفين</span>
+          <span class="text-muted">إعداد أرقام الفروع وربط Gupshup Coexistence وصلاحيات الموظفين</span>
         </div>
         <div class="d-flex gap-2 flex-wrap mobile-stack">
           <a href="{{ url_for('whatsapp_branches') }}" class="btn btn-secondary btn-sm">↩ رجوع إلى واتساب الفروع</a>
@@ -121,34 +121,30 @@
       </div>
 
       <div class="alert alert-info py-2 mb-3">
-        تعديل هذه البيانات يغيّر طريقة ظهور الرقم داخل موقع آل عشان. الربط الفعلي مع Meta يعتمد على <strong>Meta Phone Number ID</strong> وإعدادات Render.
+        في وضع <strong>Gupshup Coexistence</strong> يبقى WhatsApp Business على الجوال ويستخدم الموقع Gupshup للإرسال والاستقبال.
       </div>
 
       <div class="wa-section">
         <div class="wa-section-head">
-          <strong>ربط Meta WhatsApp Business Platform</strong>
-          <span class="wa-status {{ 'on' if webhook_verify_token_is_set and webhook_app_secret_is_set and whatsapp_access_token_is_set else 'off' }}">
-            {{ 'جاهز للإرسال والاستقبال' if webhook_verify_token_is_set and webhook_app_secret_is_set and whatsapp_access_token_is_set else 'يحتاج إعداد Render' }}
+          <strong>ربط Gupshup Coexistence</strong>
+          <span class="wa-status {{ 'on' if whatsapp_access_token_is_set else 'off' }}">
+            {{ 'جاهز للإرسال' if whatsapp_access_token_is_set else 'يحتاج إعداد Render' }}
           </span>
         </div>
         <div class="wa-section-body">
           <div class="row g-3 align-items-end">
-            <div class="col-12 col-lg-8">
-              <label class="form-label fw-bold">Callback URL</label>
+            <div class="col-12">
+              <label class="form-label fw-bold">Webhook Callback URL</label>
               <input type="text" class="form-control" dir="ltr" value="{{ webhook_callback_url }}" readonly onclick="this.select()">
-            </div>
-            <div class="col-12 col-lg-4">
-              <div class="totals-card p-3 h-100">
-                <div class="small text-muted">Graph API Version</div>
-                <div class="fw-bold" dir="ltr">{{ whatsapp_graph_version }}</div>
-              </div>
             </div>
           </div>
           <div class="small text-muted mt-3">
-            متغيرات Render المطلوبة:
-            <code>WHATSAPP_WEBHOOK_VERIFY_TOKEN</code>،
-            <code>WHATSAPP_META_APP_SECRET</code>،
-            <code>WHATSAPP_META_ACCESS_TOKEN</code>.
+            متغيرات Render المطلوبة لأول رقم:
+            <code>GUPSHUP_API_KEY</code>،
+            <code>GUPSHUP_APP_NAME</code>،
+            <code>GUPSHUP_SOURCE_NUMBER</code>،
+            <code>GUPSHUP_BRANCH_CODE</code>،
+            <code>GUPSHUP_WEBHOOK_SECRET</code>.
             لا تضع أي مفتاح سري داخل الكود أو GitHub.
           </div>
         </div>
@@ -182,8 +178,8 @@
                 <input type="text" class="form-control wa-edit-field" name="phone_number" value="{{ n['phone_number'] or '' }}" maxlength="30" dir="ltr" placeholder="9665XXXXXXXX" readonly>
               </div>
               <div class="wa-field">
-                <label>Meta Phone Number ID</label>
-                <input type="text" class="form-control wa-edit-field" name="meta_phone_number_id" value="{{ n['meta_phone_number_id'] or '' }}" maxlength="100" dir="ltr" placeholder="123456789012345" readonly>
+                <label>Meta Phone Number ID <span class="small text-muted">(اختياري)</span></label>
+                <input type="text" class="form-control wa-edit-field" name="meta_phone_number_id" value="{{ n['meta_phone_number_id'] or '' }}" maxlength="100" dir="ltr" placeholder="يُحدّث تلقائيًا من Webhook عند توفره" readonly>
               </div>
               <div class="wa-field">
                 <label>الترتيب</label>
@@ -198,9 +194,9 @@
                   <label class="form-check-label" for="active-{{ n['id'] }}">إظهار الرقم في واتساب الفروع</label>
                 </div>
                 {% if n['meta_phone_number_id'] %}
-                  <div class="wa-meta mt-1">مربوط مع Meta — Phone Number ID: {{ n['meta_phone_number_id'] }}</div>
+                  <div class="wa-meta mt-1">Phone Number ID: {{ n['meta_phone_number_id'] }}</div>
                 {% else %}
-                  <div class="wa-meta mt-1">غير مربوط مع Meta — أدخل Meta Phone Number ID عند التعديل</div>
+                  <div class="wa-meta mt-1">لا يلزم إدخال Phone Number ID يدويًا مع Gupshup</div>
                 {% endif %}
               </div>
 

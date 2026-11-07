@@ -397,8 +397,8 @@
 
       {% if connected_count == 0 or not api_ready %}
         <div class="alert alert-warning py-2 wa-connect-note" role="alert">
-          {% if connected_count == 0 %}لم يتم إدخال Meta Phone Number ID لأي رقم متاح لك. {% endif %}
-          {% if not api_ready %}الإرسال يحتاج إضافة <code>WHATSAPP_META_ACCESS_TOKEN</code> في Render. {% endif %}
+          {% if connected_count == 0 %}لم يتم إدخال رقم جوال لأي رقم واتساب متاح لك. {% endif %}
+          {% if not api_ready %}الإرسال يحتاج إضافة <code>GUPSHUP_API_KEY</code> في Render. {% endif %}
         </div>
       {% endif %}
 
@@ -408,7 +408,7 @@
         {% for n in numbers %}
           <a href="{{ url_for('whatsapp_branches', number=n['id'], q=search_text) }}"
              class="btn btn-sm {% if selected_number|string == n['id']|string %}btn-primary{% else %}btn-outline-light{% endif %}">
-            <span class="status-dot {% if n['meta_phone_number_id'] %}connected{% endif %}"></span>{{ n['label'] }}
+            <span class="status-dot {% if n['phone_number'] or n['meta_phone_number_id'] %}connected{% endif %}"></span>{{ n['label'] }}
           </a>
         {% endfor %}
       </div>
@@ -464,7 +464,7 @@
                 <div class="wa-bubble-row {{ 'out' if m['direction']=='out' else 'in' }}">
                   <div class="wa-bubble">
                     {% if m['direction']=='out' and m['sent_by_username'] %}<div class="wa-agent">👤 {{ m['sent_by_username'] }}</div>{% endif %}
-                    {% if m['meta_media_id'] %}
+                    {% if m['meta_media_id'] or m['media_url'] %}
                       <div class="wa-media">
                         {% if m['message_type']=='image' %}
                           <a href="{{ url_for('whatsapp_media', message_id=m['id']) }}" target="_blank"><img loading="lazy" src="{{ url_for('whatsapp_media', message_id=m['id']) }}" alt="صورة واتساب"></a>
@@ -511,7 +511,7 @@
             {% elif not can_reply_active %}
               <div class="wa-closed">👁️ لديك صلاحية عرض هذه المحادثة فقط، بدون رد.</div>
             {% else %}
-              <div class="wa-closed">⚙️ يلزم ضبط Access Token في Render قبل الإرسال.</div>
+              <div class="wa-closed">⚙️ يلزم ضبط Gupshup API Key في Render قبل الإرسال.</div>
             {% endif %}
           {% else %}
             <div class="wa-chat-placeholder">

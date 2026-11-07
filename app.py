@@ -8,6 +8,8 @@ import sqlite3
 import uuid
 import urllib.request
 import urllib.error
+import urllib.parse
+import time
 
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
@@ -42,6 +44,10 @@ DATABASE = os.environ.get("DATABASE_PATH") or os.path.join(BASE_DIR, "data.db")
 # Local: slides go to ./home_slides beside data.db
 SLIDES_DIR = os.path.join(os.path.dirname(DATABASE), "home_slides")
 os.makedirs(SLIDES_DIR, exist_ok=True)
+
+# WhatsApp media cache / temporary outbound files
+WA_MEDIA_DIR = os.path.join(os.path.dirname(DATABASE), "wa_media")
+os.makedirs(WA_MEDIA_DIR, exist_ok=True)
 
 ALLOWED_SLIDE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 
@@ -1117,6 +1123,173 @@ def _wa_access_token():
     return (os.environ.get("WHATSAPP_META_ACCESS_TOKEN") or "").strip()
 
 
+def _wa_digits(value):
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _gupshup_webhook_secret():
+    return (os.environ.get("GUPSHUP_WEBHOOK_SECRET") or "").strip()
+
+
+def _gupshup_branch_suffix(branch_code=None):
+    raw = str(branch_code or "").strip().upper()
+    return "".join(ch if ch.isalnum() else "_" for ch in raw)
+
+
+def _gupshup_env(name, branch_code=None):
+    suffix = _gupshup_branch_suffix(branch_code)
+    if suffix:
+        value = (os.environ.get(f"{name}_{suffix}") or "").strip()
+        if value:
+            return value
+    return (os.environ.get(name) or "").strip()
+
+
+def _gupshup_api_key(branch_code=None):
+    return _gupshup_env("GUPSHUP_API_KEY", branch_code)
+
+
+def _gupshup_app_name(branch_code=None):
+    return _gupshup_env("GUPSHUP_APP_NAME", branch_code) or "AlEshan"
+
+
+def _gupshup_source_number(branch_code=None, fallback=None):
+    return _wa_digits(_gupshup_env("GUPSHUP_SOURCE_NUMBER", branch_code) or fallback)
+
+
+def _gupshup_app_id(branch_code=None):
+    return _gupshup_env("GUPSHUP_APP_ID", branch_code)
+
+
+def _gupshup_app_token(branch_code=None):
+    return _gupshup_env("GUPSHUP_APP_TOKEN", branch_code)
+
+
+def _gupshup_any_api_ready():
+    if _gupshup_api_key():
+        return True
+    return any(k.startswith("GUPSHUP_API_KEY_") and str(v or "").strip()
+               for k, v in os.environ.items())
+
+
+def _gupshup_post_message(branch_code, source_number, destination, message_obj):
+    """Send a WhatsApp session message through Gupshup Self-Serve v1 API."""
+    api_key = _gupshup_api_key(branch_code)
+    source = _gupshup_source_number(branch_code, source_number)
+    app_name = _gupshup_app_name(branch_code)
+    destination = _wa_digits(destination)
+    if not api_key:
+        return None, f"GUPSHUP_API_KEY{('_' + _gupshup_branch_suffix(branch_code)) if branch_code else ''} غير مضبوط في Render"
+    if not source:
+        return None, "رقم المصدر في Gupshup غير مضبوط"
+    if not destination:
+        return None, "رقم العميل غير صالح"
+
+    form = {
+        "channel": "whatsapp",
+        "source": source,
+        "destination": destination,
+        "src.name": app_name,
+        "message": json.dumps(message_obj, ensure_ascii=False),
+    }
+    body = urllib.parse.urlencode(form).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.gupshup.io/wa/api/v1/msg",
+        data=body,
+        headers={
+            "apikey": api_key,
+            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        data = json.loads(raw) if raw else {}
+        if str(data.get("status") or "").lower() == "error":
+            return None, str(data.get("message") or "Gupshup رفض إرسال الرسالة")
+        message_id = str(data.get("messageId") or data.get("message_id") or "").strip()
+        return message_id or None, None
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            data = json.loads(raw)
+            msg = data.get("message") or data.get("error") or raw
+        except Exception:
+            msg = raw
+        return None, f"Gupshup HTTP {exc.code}: {msg}"
+    except Exception as exc:
+        return None, f"تعذر الاتصال بـ Gupshup: {exc}"
+
+
+def _wa_media_signature(filename, expires):
+    secret = (app.secret_key or "change-this-secret").encode("utf-8")
+    payload = f"{filename}:{int(expires)}".encode("utf-8")
+    return hmac.new(secret, payload, hashlib.sha256).hexdigest()
+
+
+def _wa_save_outbound_media(file_storage):
+    original = secure_filename(file_storage.filename or "attachment") or "attachment"
+    ext = os.path.splitext(original)[1].lower()
+    stored = f"{uuid.uuid4().hex}{ext}"
+    path = os.path.join(WA_MEDIA_DIR, stored)
+    file_storage.save(path)
+    size = os.path.getsize(path)
+    if size > 100 * 1024 * 1024:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return None, None, None, "حجم المرفق أكبر من 100MB"
+    mime = file_storage.mimetype or mimetypes.guess_type(original)[0] or "application/octet-stream"
+    return stored, mime, original, None
+
+
+def _wa_public_media_url(stored_name, ttl_seconds=3600):
+    expires = int(time.time()) + int(ttl_seconds)
+    sig = _wa_media_signature(stored_name, expires)
+    return request.url_root.rstrip("/") + url_for(
+        "whatsapp_public_media", filename=stored_name, exp=expires, sig=sig
+    )
+
+
+def _wa_gupshup_number(db, metadata):
+    """Resolve a Gupshup v3 webhook to one of the configured branch numbers."""
+    display_phone = _wa_digits((metadata or {}).get("display_phone_number"))
+    phone_number_id = str((metadata or {}).get("phone_number_id") or "").strip()
+    rows = db.execute(
+        "SELECT id, label, branch_code, phone_number, meta_phone_number_id FROM wa_numbers WHERE is_active=1 ORDER BY sort_order, id"
+    ).fetchall()
+    for row in rows:
+        if display_phone and _wa_digits(row["phone_number"]) == display_phone:
+            if phone_number_id and (row["meta_phone_number_id"] or "") != phone_number_id:
+                db.execute("UPDATE wa_numbers SET meta_phone_number_id=? WHERE id=?", (phone_number_id, row["id"]))
+            return row
+    if phone_number_id:
+        for row in rows:
+            if str(row["meta_phone_number_id"] or "").strip() == phone_number_id:
+                return row
+
+    # First-number fallback for initial deployment.
+    env_source = _wa_digits(os.environ.get("GUPSHUP_SOURCE_NUMBER"))
+    env_branch = (os.environ.get("GUPSHUP_BRANCH_CODE") or "").strip()
+    if display_phone and env_source and display_phone == env_source and env_branch:
+        row = db.execute(
+            "SELECT id, label, branch_code, phone_number, meta_phone_number_id FROM wa_numbers WHERE branch_code=? AND is_active=1 LIMIT 1",
+            (env_branch,),
+        ).fetchone()
+        if row:
+            db.execute(
+                "UPDATE wa_numbers SET phone_number=?, meta_phone_number_id=COALESCE(NULLIF(?,''), meta_phone_number_id) WHERE id=?",
+                (display_phone, phone_number_id, row["id"]),
+            )
+            return db.execute(
+                "SELECT id, label, branch_code, phone_number, meta_phone_number_id FROM wa_numbers WHERE id=?",
+                (row["id"],),
+            ).fetchone()
+    return None
+
+
 def _wa_graph_version():
     value = (os.environ.get("WHATSAPP_GRAPH_API_VERSION") or "v26.0").strip()
     if not value.startswith("v"):
@@ -1254,14 +1427,16 @@ def _wa_message_summary(message: dict):
     media_id = None
     mime_type = None
     filename = None
+    media_url = None
 
     if msg_type == "text":
         body = ((message.get("text") or {}).get("body") or "").strip()
     elif msg_type in ("image", "video", "audio", "document", "sticker"):
         data = message.get(msg_type) or {}
-        media_id = data.get("id")
-        mime_type = data.get("mime_type")
-        filename = data.get("filename")
+        media_id = data.get("id") or data.get("mediaId")
+        mime_type = data.get("mime_type") or data.get("content-type") or data.get("contentType")
+        filename = data.get("filename") or data.get("name")
+        media_url = data.get("url") or data.get("link") or data.get("originalUrl")
         caption = (data.get("caption") or "").strip()
         labels = {
             "image": "📷 صورة",
@@ -1308,7 +1483,7 @@ def _wa_message_summary(message: dict):
     else:
         body = f"رسالة من نوع {msg_type}"
 
-    return body or "رسالة واتساب", media_id, mime_type, filename
+    return body or "رسالة واتساب", media_id, mime_type, filename, media_url
 
 
 def _wa_iso_from_unix(timestamp_value):
@@ -1426,7 +1601,7 @@ def whatsapp_webhook():
                         continue
                     contact_name = contact_names.get(contact_wa_id) or contact_wa_id
                     msg_type = str(message.get("type") or "unknown").strip()
-                    body, meta_media_id, media_mime_type, media_filename = _wa_message_summary(message)
+                    body, meta_media_id, media_mime_type, media_filename, media_url = _wa_message_summary(message)
                     sent_at = _wa_iso_from_unix(message.get("timestamp"))
                     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -1469,9 +1644,9 @@ def whatsapp_webhook():
                             body, media_url, meta_media_id, media_mime_type, media_filename,
                             sent_at, status, status_error, sent_by_user_id,
                             sent_by_username, created_at
-                        ) VALUES (?, ?, 'in', ?, ?, NULL, ?, ?, ?, ?, 'received', NULL, NULL, NULL, ?)
+                        ) VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, 'received', NULL, NULL, NULL, ?)
                         """,
-                        (conversation_id, meta_message_id or None, msg_type, body,
+                        (conversation_id, meta_message_id or None, msg_type, body, media_url,
                          meta_media_id, media_mime_type, media_filename, sent_at, now_iso),
                     )
         db.commit()
@@ -1480,6 +1655,193 @@ def whatsapp_webhook():
         print("WhatsApp webhook processing error:", repr(exc))
         return "Webhook processing failed", 500
     return "EVENT_RECEIVED", 200
+
+
+
+@app.route("/webhooks/gupshup", methods=["POST"])
+def gupshup_webhook():
+    """Receive Gupshup Meta-format v3 events, including Coexistence echoes."""
+    expected_secret = _gupshup_webhook_secret()
+    if expected_secret:
+        received_secret = (request.headers.get("X-Gupshup-Webhook-Secret") or "").strip()
+        if not received_secret or not hmac.compare_digest(received_secret, expected_secret):
+            print("Gupshup webhook rejected: invalid secret")
+            return "", 401
+
+    payload = request.get_json(silent=True) or {}
+    # Gupshup sends a callback-set event when a subscription is created. Always acknowledge it.
+    if not isinstance(payload, dict):
+        return "", 200
+
+    db = get_db()
+    ensure_whatsapp_schema(db)
+    try:
+        for entry in payload.get("entry") or []:
+            for change in entry.get("changes") or []:
+                field = str(change.get("field") or "").strip()
+                value = change.get("value") or {}
+                metadata = value.get("metadata") or {}
+                wa_number = _wa_gupshup_number(db, metadata)
+
+                # Delivery / read / failed / queued states.
+                for status_item in value.get("statuses") or []:
+                    status_name = str(status_item.get("status") or status_item.get("type") or "").strip()
+                    candidate_ids = [
+                        str(status_item.get("gs_id") or "").strip(),
+                        str(status_item.get("id") or "").strip(),
+                    ]
+                    errors = status_item.get("errors") or []
+                    error_text = None
+                    if errors:
+                        e = errors[0] or {}
+                        error_text = (e.get("title") or e.get("message") or e.get("details") or "").strip() or None
+                    if status_name:
+                        for mid in [x for x in candidate_ids if x]:
+                            db.execute(
+                                "UPDATE wa_messages SET status=?, status_error=? WHERE meta_message_id=?",
+                                (status_name, error_text, mid),
+                            )
+
+                if field == "messages":
+                    incoming_messages = value.get("messages") or []
+                    if incoming_messages and not wa_number:
+                        print("Gupshup webhook: no branch number mapped for metadata", metadata)
+                        continue
+
+                    contact_names = {}
+                    for contact in value.get("contacts") or []:
+                        wa_id = _wa_digits(contact.get("wa_id") or contact.get("phone"))
+                        profile = contact.get("profile") or {}
+                        if wa_id:
+                            contact_names[wa_id] = (profile.get("name") or "").strip()
+
+                    for message in incoming_messages:
+                        meta_message_id = str(message.get("id") or "").strip()
+                        if meta_message_id:
+                            exists = db.execute(
+                                "SELECT id FROM wa_messages WHERE meta_message_id=? LIMIT 1",
+                                (meta_message_id,),
+                            ).fetchone()
+                            if exists:
+                                continue
+                        contact_wa_id = _wa_digits(message.get("from"))
+                        if not contact_wa_id:
+                            continue
+                        contact_name = contact_names.get(contact_wa_id) or contact_wa_id
+                        msg_type = str(message.get("type") or "unknown").strip()
+                        body, meta_media_id, media_mime_type, media_filename, media_url = _wa_message_summary(message)
+                        sent_at = _wa_iso_from_unix(message.get("timestamp"))
+                        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+                        conversation = db.execute(
+                            "SELECT id FROM wa_conversations WHERE wa_number_id=? AND contact_wa_id=? ORDER BY id DESC LIMIT 1",
+                            (wa_number["id"], contact_wa_id),
+                        ).fetchone()
+                        if conversation:
+                            conversation_id = conversation["id"]
+                            db.execute(
+                                """
+                                UPDATE wa_conversations
+                                   SET contact_name=?, last_message=?, last_message_at=?, last_inbound_at=?,
+                                       unread_count=COALESCE(unread_count,0)+1, updated_at=?
+                                 WHERE id=?
+                                """,
+                                (contact_name, body, sent_at, sent_at, now_iso, conversation_id),
+                            )
+                        else:
+                            cur = db.execute(
+                                """
+                                INSERT INTO wa_conversations
+                                    (wa_number_id, contact_wa_id, contact_name, last_message,
+                                     last_message_at, last_inbound_at, unread_count, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+                                """,
+                                (wa_number["id"], contact_wa_id, contact_name, body, sent_at, sent_at, now_iso),
+                            )
+                            conversation_id = cur.lastrowid
+
+                        db.execute(
+                            """
+                            INSERT INTO wa_messages (
+                                conversation_id, meta_message_id, direction, message_type, body,
+                                media_url, meta_media_id, media_mime_type, media_filename,
+                                sent_at, status, status_error, sent_by_user_id, sent_by_username, created_at
+                            ) VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, 'received', NULL, NULL, NULL, ?)
+                            """,
+                            (conversation_id, meta_message_id or None, msg_type, body, media_url,
+                             meta_media_id, media_mime_type, media_filename, sent_at, now_iso),
+                        )
+
+                elif field == "smb_message_echoes":
+                    # Messages sent by staff from the WhatsApp Business mobile app.
+                    echoes = value.get("message_echoes") or value.get("messages") or []
+                    if echoes and not wa_number:
+                        print("Gupshup coexistence webhook: no branch number mapped", metadata)
+                        continue
+                    contact_names = {}
+                    for contact in value.get("contacts") or []:
+                        wa_id = _wa_digits(contact.get("wa_id") or contact.get("phone"))
+                        profile = contact.get("profile") or {}
+                        if wa_id:
+                            contact_names[wa_id] = (profile.get("name") or "").strip()
+                    for message in echoes:
+                        meta_message_id = str(message.get("id") or "").strip()
+                        if meta_message_id:
+                            exists = db.execute(
+                                "SELECT id FROM wa_messages WHERE meta_message_id=? LIMIT 1",
+                                (meta_message_id,),
+                            ).fetchone()
+                            if exists:
+                                continue
+                        contact_wa_id = _wa_digits(message.get("to") or message.get("recipient_id"))
+                        if not contact_wa_id:
+                            continue
+                        contact_name = contact_names.get(contact_wa_id) or contact_wa_id
+                        msg_type = str(message.get("type") or "unknown").strip()
+                        body, meta_media_id, media_mime_type, media_filename, media_url = _wa_message_summary(message)
+                        sent_at = _wa_iso_from_unix(message.get("timestamp"))
+                        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+                        conversation = db.execute(
+                            "SELECT id FROM wa_conversations WHERE wa_number_id=? AND contact_wa_id=? ORDER BY id DESC LIMIT 1",
+                            (wa_number["id"], contact_wa_id),
+                        ).fetchone()
+                        if conversation:
+                            conversation_id = conversation["id"]
+                            db.execute(
+                                "UPDATE wa_conversations SET contact_name=?, last_message=?, last_message_at=?, updated_at=? WHERE id=?",
+                                (contact_name, body, sent_at, now_iso, conversation_id),
+                            )
+                        else:
+                            cur = db.execute(
+                                """
+                                INSERT INTO wa_conversations
+                                    (wa_number_id, contact_wa_id, contact_name, last_message,
+                                     last_message_at, last_inbound_at, unread_count, updated_at)
+                                VALUES (?, ?, ?, ?, ?, NULL, 0, ?)
+                                """,
+                                (wa_number["id"], contact_wa_id, contact_name, body, sent_at, now_iso),
+                            )
+                            conversation_id = cur.lastrowid
+
+                        db.execute(
+                            """
+                            INSERT INTO wa_messages (
+                                conversation_id, meta_message_id, direction, message_type, body,
+                                media_url, meta_media_id, media_mime_type, media_filename,
+                                sent_at, status, status_error, sent_by_user_id, sent_by_username, created_at
+                            ) VALUES (?, ?, 'out', ?, ?, ?, ?, ?, ?, ?, 'sent', NULL, NULL, 'WhatsApp Business', ?)
+                            """,
+                            (conversation_id, meta_message_id or None, msg_type, body, media_url,
+                             meta_media_id, media_mime_type, media_filename, sent_at, now_iso),
+                        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        print("Gupshup webhook processing error:", repr(exc))
+        return "", 500
+    return "", 200
+
 
 
 # =========================
@@ -1602,7 +1964,7 @@ def whatsapp_branches():
         except ValueError:
             pass
 
-    connected_count = sum(1 for n in numbers if (n["meta_phone_number_id"] or "").strip()) if numbers else 0
+    connected_count = sum(1 for n in numbers if _wa_digits(n["phone_number"]) or (n["meta_phone_number_id"] or "").strip()) if numbers else 0
     total_unread = sum(int(c["unread_count"] or 0) for c in conversations) if conversations else 0
 
     return render_template(
@@ -1620,7 +1982,7 @@ def whatsapp_branches():
         freeform_open=freeform_open,
         freeform_expires_at=freeform_expires_at,
         latest_message_id=latest_message_id,
-        api_ready=bool(_wa_access_token()),
+        api_ready=bool(_wa_access_token() or _gupshup_any_api_ready()),
     )
 
 
@@ -1636,7 +1998,8 @@ def whatsapp_send_message(conversation_id):
     placeholders = ",".join(["?"] * len(reply_ids))
     conv = db.execute(
         f"""
-        SELECT c.*, n.label AS number_label, n.meta_phone_number_id
+        SELECT c.*, n.label AS number_label, n.branch_code, n.phone_number,
+               n.meta_phone_number_id
         FROM wa_conversations c
         JOIN wa_numbers n ON n.id=c.wa_number_id
         WHERE c.id=? AND c.wa_number_id IN ({placeholders})
@@ -1645,11 +2008,14 @@ def whatsapp_send_message(conversation_id):
     ).fetchone()
     if not conv:
         return render_template("no_permission.html"), 403
-    if not (conv["meta_phone_number_id"] or "").strip():
-        flash("هذا الرقم لم يتم ربط Meta Phone Number ID له بعد", "danger")
+
+    branch_code = conv["branch_code"] or ""
+    use_gupshup = bool(_gupshup_api_key(branch_code))
+    if not use_gupshup and not (conv["meta_phone_number_id"] or "").strip():
+        flash("هذا الرقم غير مربوط بـ Gupshup أو Meta للإرسال", "danger")
         return redirect(url_for("whatsapp_branches", conversation=conversation_id))
-    if not _wa_access_token():
-        flash("أضف WHATSAPP_META_ACCESS_TOKEN في Render أولاً", "danger")
+    if not use_gupshup and not _wa_access_token():
+        flash("أضف GUPSHUP_API_KEY أو WHATSAPP_META_ACCESS_TOKEN في Render أولاً", "danger")
         return redirect(url_for("whatsapp_branches", conversation=conversation_id))
 
     freeform_open, _ = _wa_freeform_open(conv["last_inbound_at"])
@@ -1664,63 +2030,106 @@ def whatsapp_send_message(conversation_id):
         flash("اكتب رسالة أو اختر مرفقاً", "warning")
         return redirect(url_for("whatsapp_branches", conversation=conversation_id))
 
-    phone_number_id = (conv["meta_phone_number_id"] or "").strip()
-    recipient = (conv["contact_wa_id"] or "").strip()
+    recipient = _wa_digits(conv["contact_wa_id"])
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     message_type = "text"
     media_id = None
     media_mime = None
     media_filename = None
+    stored_media_ref = None
     display_body = text_body
 
-    if has_attachment:
-        media_id, media_mime, media_filename, err = _wa_upload_media(phone_number_id, attachment)
-        if err:
-            flash(f"تعذر رفع المرفق إلى Meta: {err}", "danger")
-            return redirect(url_for("whatsapp_branches", conversation=conversation_id))
-
-        if media_mime.startswith("image/"):
-            message_type = "image"
-        elif media_mime.startswith("video/"):
-            message_type = "video"
-        elif media_mime.startswith("audio/"):
-            message_type = "audio"
-        else:
-            message_type = "document"
-
-        media_obj = {"id": media_id}
-        if message_type in ("image", "video") and text_body:
-            media_obj["caption"] = text_body
-        if message_type == "document":
-            media_obj["filename"] = media_filename
+    if use_gupshup:
+        if has_attachment:
+            stored_name, media_mime, media_filename, err = _wa_save_outbound_media(attachment)
+            if err:
+                flash(err, "danger")
+                return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+            public_url = _wa_public_media_url(stored_name)
+            stored_media_ref = "local:" + stored_name
+            if media_mime.startswith("image/"):
+                message_type = "image"
+                message_obj = {"type": "image", "originalUrl": public_url, "previewUrl": public_url}
+                if text_body:
+                    message_obj["caption"] = text_body
+            elif media_mime.startswith("video/"):
+                message_type = "video"
+                message_obj = {"type": "video", "url": public_url, "previewUrl": public_url}
+                if text_body:
+                    message_obj["caption"] = text_body
+            elif media_mime.startswith("audio/"):
+                message_type = "audio"
+                message_obj = {"type": "audio", "url": public_url}
+            else:
+                message_type = "document"
+                message_obj = {"type": "file", "url": public_url, "filename": media_filename}
+                if text_body:
+                    message_obj["caption"] = text_body
+            labels = {"image":"📷 صورة", "video":"🎥 فيديو", "audio":"🎵 رسالة صوتية", "document":"📄 مستند"}
+            display_body = labels[message_type]
             if text_body:
-                media_obj["caption"] = text_body
-        payload = {
-            "messaging_product": "whatsapp",
-            "recipient_type": "individual",
-            "to": recipient,
-            "type": message_type,
-            message_type: media_obj,
-        }
-        labels = {"image":"📷 صورة", "video":"🎥 فيديو", "audio":"🎵 رسالة صوتية", "document":"📄 مستند"}
-        display_body = labels[message_type]
-        if text_body:
-            display_body += f": {text_body}"
-        elif media_filename and message_type == "document":
-            display_body += f": {media_filename}"
-    else:
-        payload = {
-            "messaging_product": "whatsapp",
-            "recipient_type": "individual",
-            "to": recipient,
-            "type": "text",
-            "text": {"preview_url": True, "body": text_body},
-        }
+                display_body += f": {text_body}"
+            elif media_filename and message_type == "document":
+                display_body += f": {media_filename}"
+        else:
+            message_obj = {"type": "text", "text": text_body, "previewUrl": True}
 
-    meta_message_id, err = _wa_send_payload(phone_number_id, payload)
-    if err:
-        flash(f"تعذر إرسال الرسالة: {err}", "danger")
-        return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+        meta_message_id, err = _gupshup_post_message(
+            branch_code,
+            conv["phone_number"],
+            recipient,
+            message_obj,
+        )
+        if err:
+            flash(f"تعذر إرسال الرسالة عبر Gupshup: {err}", "danger")
+            return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+    else:
+        phone_number_id = (conv["meta_phone_number_id"] or "").strip()
+        if has_attachment:
+            media_id, media_mime, media_filename, err = _wa_upload_media(phone_number_id, attachment)
+            if err:
+                flash(f"تعذر رفع المرفق إلى Meta: {err}", "danger")
+                return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+            if media_mime.startswith("image/"):
+                message_type = "image"
+            elif media_mime.startswith("video/"):
+                message_type = "video"
+            elif media_mime.startswith("audio/"):
+                message_type = "audio"
+            else:
+                message_type = "document"
+            media_obj = {"id": media_id}
+            if message_type in ("image", "video") and text_body:
+                media_obj["caption"] = text_body
+            if message_type == "document":
+                media_obj["filename"] = media_filename
+                if text_body:
+                    media_obj["caption"] = text_body
+            payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": recipient,
+                "type": message_type,
+                message_type: media_obj,
+            }
+            labels = {"image":"📷 صورة", "video":"🎥 فيديو", "audio":"🎵 رسالة صوتية", "document":"📄 مستند"}
+            display_body = labels[message_type]
+            if text_body:
+                display_body += f": {text_body}"
+            elif media_filename and message_type == "document":
+                display_body += f": {media_filename}"
+        else:
+            payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": recipient,
+                "type": "text",
+                "text": {"preview_url": True, "body": text_body},
+            }
+        meta_message_id, err = _wa_send_payload(phone_number_id, payload)
+        if err:
+            flash(f"تعذر إرسال الرسالة: {err}", "danger")
+            return redirect(url_for("whatsapp_branches", conversation=conversation_id))
 
     username = session.get("username") or ""
     user_id = session.get("user_id")
@@ -1730,21 +2139,33 @@ def whatsapp_send_message(conversation_id):
             conversation_id, meta_message_id, direction, message_type, body,
             media_url, meta_media_id, media_mime_type, media_filename,
             sent_at, status, status_error, sent_by_user_id, sent_by_username, created_at
-        ) VALUES (?, ?, 'out', ?, ?, NULL, ?, ?, ?, ?, 'sent', NULL, ?, ?, ?)
+        ) VALUES (?, ?, 'out', ?, ?, ?, ?, ?, ?, ?, 'sent', NULL, ?, ?, ?)
         """,
-        (conversation_id, meta_message_id, message_type, display_body, media_id,
-         media_mime, media_filename, now_iso, user_id, username, now_iso),
+        (conversation_id, meta_message_id, message_type, display_body, stored_media_ref,
+         media_id, media_mime, media_filename, now_iso, user_id, username, now_iso),
     )
     db.execute(
-        """
-        UPDATE wa_conversations
-           SET last_message=?, last_message_at=?, updated_at=?
-         WHERE id=?
-        """,
+        "UPDATE wa_conversations SET last_message=?, last_message_at=?, updated_at=? WHERE id=?",
         (display_body, now_iso, now_iso, conversation_id),
     )
     db.commit()
     return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+
+
+@app.route("/whatsapp/public-media/<path:filename>")
+def whatsapp_public_media(filename):
+    """Short-lived signed URL used only so Gupshup can fetch an outbound attachment."""
+    try:
+        expires = int(request.args.get("exp") or 0)
+    except ValueError:
+        expires = 0
+    sig = (request.args.get("sig") or "").strip()
+    if not expires or expires < int(time.time()):
+        return "Expired", 410
+    expected = _wa_media_signature(filename, expires)
+    if not sig or not hmac.compare_digest(sig, expected):
+        return "Forbidden", 403
+    return send_from_directory(WA_MEDIA_DIR, filename, max_age=60)
 
 
 @app.route("/whatsapp/media/<int:message_id>")
@@ -1759,8 +2180,8 @@ def whatsapp_media(message_id):
     placeholders = ",".join(["?"] * len(allowed_ids))
     row = db.execute(
         f"""
-        SELECT m.id, m.message_type, m.meta_media_id, m.media_mime_type, m.media_filename,
-               c.wa_number_id, n.meta_phone_number_id
+        SELECT m.id, m.message_type, m.media_url, m.meta_media_id, m.media_mime_type, m.media_filename,
+               c.wa_number_id, n.branch_code, n.meta_phone_number_id
         FROM wa_messages m
         JOIN wa_conversations c ON c.id=m.conversation_id
         JOIN wa_numbers n ON n.id=c.wa_number_id
@@ -1768,31 +2189,55 @@ def whatsapp_media(message_id):
         """,
         [message_id] + list(allowed_ids),
     ).fetchone()
-    if not row or not row["meta_media_id"]:
+    if not row:
         return "Media not found", 404
 
-    info, err = _wa_graph_request(
-        "GET",
-        f"{row['meta_media_id']}?phone_number_id={row['meta_phone_number_id']}",
-    )
-    if err or not info or not info.get("url"):
-        return f"تعذر جلب المرفق من Meta: {err or 'Media URL غير متوفر'}", 502
+    media_url = str(row["media_url"] or "").strip()
+    if media_url.startswith("local:"):
+        filename = media_url.split(":", 1)[1]
+        return send_from_directory(
+            WA_MEDIA_DIR,
+            filename,
+            as_attachment=(row["message_type"] == "document"),
+            download_name=row["media_filename"] or filename,
+            max_age=60,
+        )
 
-    raw, err = _wa_graph_request("GET", info["url"], timeout=45)
-    if err or not raw or "raw" not in raw:
-        return f"تعذر تنزيل المرفق من Meta: {err or 'خطأ غير معروف'}", 502
+    if media_url.startswith("http://") or media_url.startswith("https://"):
+        try:
+            req = urllib.request.Request(media_url, headers={"User-Agent": "AlEshanWhatsApp/1.0"})
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                content = resp.read()
+                content_type = resp.headers.get("Content-Type") or row["media_mime_type"] or "application/octet-stream"
+            return send_file(
+                BytesIO(content),
+                mimetype=content_type,
+                as_attachment=(row["message_type"] == "document"),
+                download_name=row["media_filename"] or f"whatsapp-{message_id}",
+                max_age=60,
+            )
+        except Exception as exc:
+            print("Gupshup media URL download failed:", repr(exc))
 
-    content = raw["raw"]
-    mime = row["media_mime_type"] or info.get("mime_type") or raw.get("content_type") or "application/octet-stream"
-    filename = row["media_filename"] or f"whatsapp-{message_id}"
-    as_attachment = row["message_type"] == "document"
-    return send_file(
-        BytesIO(content),
-        mimetype=mime,
-        as_attachment=as_attachment,
-        download_name=filename,
-        max_age=60,
-    )
+    # Legacy direct-Meta media fallback.
+    if row["meta_media_id"] and _wa_access_token() and row["meta_phone_number_id"]:
+        info, err = _wa_graph_request(
+            "GET",
+            f"{row['meta_media_id']}?phone_number_id={row['meta_phone_number_id']}",
+        )
+        if not err and info and info.get("url"):
+            raw, err = _wa_graph_request("GET", info["url"], timeout=45)
+            if not err and raw and "raw" in raw:
+                mime = row["media_mime_type"] or info.get("mime_type") or raw.get("content_type") or "application/octet-stream"
+                return send_file(
+                    BytesIO(raw["raw"]),
+                    mimetype=mime,
+                    as_attachment=(row["message_type"] == "document"),
+                    download_name=row["media_filename"] or f"whatsapp-{message_id}",
+                    max_age=60,
+                )
+
+    return "المرفق وصل كـ Media ID فقط. أضف GUPSHUP_APP_TOKEN لاحقًا لتفعيل تنزيل وسائط Coexistence من Gupshup.", 404
 
 
 @app.route("/whatsapp/api/state")
@@ -1939,10 +2384,10 @@ def whatsapp_numbers_manage():
         users=users,
         access_map=access_map,
         configured_users=configured_users,
-        webhook_callback_url=request.url_root.rstrip("/") + url_for("whatsapp_webhook"),
+        webhook_callback_url=request.url_root.rstrip("/") + url_for("gupshup_webhook"),
         webhook_verify_token_is_set=bool(_wa_webhook_verify_token()),
         webhook_app_secret_is_set=bool(_wa_meta_app_secret()),
-        whatsapp_access_token_is_set=bool(_wa_access_token()),
+        whatsapp_access_token_is_set=bool(_wa_access_token() or _gupshup_any_api_ready()),
         whatsapp_graph_version=_wa_graph_version(),
     )
 
