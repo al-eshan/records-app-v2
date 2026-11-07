@@ -223,12 +223,19 @@
           </div>
 
           {% for u in users %}
+            {% set is_master_user = (u['username']|lower == 'adm-es') %}
             <form method="post" action="{{ url_for('whatsapp_numbers_manage') }}" class="wa-user-card" id="user-{{ u['id'] }}">
               <input type="hidden" name="action" value="save_number_access">
               <input type="hidden" name="user_id" value="{{ u['id'] }}">
               <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
-                <strong>👤 {{ u['username'] }}</strong>
-                {% if u['id'] in configured_users %}<span class="badge bg-success">مخصص</span>{% else %}<span class="badge bg-secondary">افتراضي: جميع الأرقام</span>{% endif %}
+                <strong>👤 {{ 'ADM-ES' if is_master_user else u['username'] }}</strong>
+                {% if is_master_user %}
+                  <span class="badge bg-primary">مدير النظام — وصول كامل تلقائي</span>
+                {% elif u['id'] in configured_users %}
+                  <span class="badge bg-success">مخصص</span>
+                {% else %}
+                  <span class="badge bg-secondary">افتراضي: جميع الأرقام</span>
+                {% endif %}
               </div>
               <div class="table-responsive">
                 <table class="table table-sm table-bordered align-middle text-center mb-2">
@@ -238,14 +245,18 @@
                       {% set ac = access_map.get((u['id'], n['id'])) %}
                       <tr>
                         <td class="text-end"><strong>{{ n['label'] }}</strong><div class="small text-muted">{{ n['branch_code'] or '' }}</div></td>
-                        <td><input class="form-check-input" type="checkbox" name="view_{{ n['id'] }}" {% if ac and ac['can_view'] %}checked{% endif %}></td>
-                        <td><input class="form-check-input" type="checkbox" name="reply_{{ n['id'] }}" {% if ac and ac['can_reply'] %}checked{% endif %}></td>
+                        <td><input class="form-check-input" type="checkbox" name="view_{{ n['id'] }}" {% if is_master_user or (ac and ac['can_view']) %}checked{% endif %} {% if is_master_user %}disabled{% endif %}></td>
+                        <td><input class="form-check-input" type="checkbox" name="reply_{{ n['id'] }}" {% if is_master_user or (ac and ac['can_reply']) %}checked{% endif %} {% if is_master_user %}disabled{% endif %}></td>
                       </tr>
                     {% endfor %}
                   </tbody>
                 </table>
               </div>
-              <button class="btn btn-primary btn-sm" type="submit">حفظ صلاحيات {{ u['username'] }}</button>
+              {% if is_master_user %}
+                <div class="small text-muted">حساب المدير الرئيسي يمتلك صلاحية عرض ورد على جميع أرقام واتساب تلقائيًا ولا يحتاج حفظ تخصيص.</div>
+              {% else %}
+                <button class="btn btn-primary btn-sm" type="submit">حفظ صلاحيات {{ u['username'] }}</button>
+              {% endif %}
             </form>
           {% else %}
             <div class="text-muted">لا يوجد مستخدمون آخرون لإدارة صلاحياتهم.</div>

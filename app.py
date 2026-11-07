@@ -1206,10 +1206,14 @@ def _gupshup_post_message(branch_code, source_number, destination, message_obj):
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
         data = json.loads(raw) if raw else {}
-        if str(data.get("status") or "").lower() == "error":
+        status = str(data.get("status") or "").lower().strip()
+        if status == "error":
             return None, str(data.get("message") or "Gupshup رفض إرسال الرسالة")
         message_id = str(data.get("messageId") or data.get("message_id") or "").strip()
-        return message_id or None, None
+        print("Gupshup send response:", {"status": status, "messageId": message_id})
+        if not message_id:
+            return None, f"Gupshup لم يُرجع Message ID. response={raw[:300]}"
+        return message_id, None
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
         try:
@@ -2139,7 +2143,7 @@ def whatsapp_send_message(conversation_id):
             conversation_id, meta_message_id, direction, message_type, body,
             media_url, meta_media_id, media_mime_type, media_filename,
             sent_at, status, status_error, sent_by_user_id, sent_by_username, created_at
-        ) VALUES (?, ?, 'out', ?, ?, ?, ?, ?, ?, ?, 'sent', NULL, ?, ?, ?)
+        ) VALUES (?, ?, 'out', ?, ?, ?, ?, ?, ?, ?, 'submitted', NULL, ?, ?, ?)
         """,
         (conversation_id, meta_message_id, message_type, display_body, stored_media_ref,
          media_id, media_mime, media_filename, now_iso, user_id, username, now_iso),
@@ -2363,7 +2367,7 @@ def whatsapp_numbers_manage():
         """
     ).fetchall()
     users = db.execute(
-        "SELECT id, username FROM users WHERE username<>? ORDER BY username COLLATE NOCASE",
+        "SELECT id, username FROM users ORDER BY CASE WHEN username=? THEN 0 ELSE 1 END, username COLLATE NOCASE",
         (MASTER_USERNAME,),
     ).fetchall()
     access_rows = db.execute(
