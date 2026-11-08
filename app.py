@@ -3368,7 +3368,7 @@ def accounting_daily(kind):
                 flash("تم إيقاف الحفظ: السجل القديم يحتوي على بيانات محفوظة.", "danger")
                 return redirect(url_for("accounting_daily", kind=kind, date=day_date))
             db.execute(
-                "INSERT OR IGNORE INTO daily_header (es, day_date, created_at) VALUES (?, ?, datetime('now'))"
+                "INSERT OR IGNORE INTO daily_header (es, day_date, created_at) VALUES (?, ?, datetime('now'))",
                 (kind, day_date),
             )
             header_id = db.execute(
