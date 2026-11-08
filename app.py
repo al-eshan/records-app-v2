@@ -3213,6 +3213,32 @@ def _daily_v2_totals(header, lines):
                 error=total_overall-total_in_enjaz)
 
 
+def _may_complete_nov8_legacy_day(db, kind, day_date, header):
+    """Allow the November 8 placeholder to become v2 only if empty.
+
+    Never silently convert a historical day with financial movements or approval.
+    """
+    if day_date != "2026-11-08" or header is None:
+        return False
+    if kind not in ("ES1", "ES2", "ES3"):
+        return False
+    if int(header["ledger_version"] or 1) != 1:
+        return False
+    if (header["financial_approval_status"] or "").strip():
+        return False
+    for column in ("cash_end", "cash_received", "mada",
+                   "bank_transfers", "total_in_enjaz", "tamara_emkan"):
+        if column in header.keys() and abs(_to_float(header[column])) > 0.000001:
+            return False
+    for table in ("daily_inputs", "daily_tamara_emkan",
+                  "daily_expenses_general", "daily_expenses_petty", "daily_line_items"):
+        if db.execute(
+            f"SELECT 1 FROM {table} WHERE header_id=? LIMIT 1", (header["id"],)
+        ).fetchone():
+            return False
+    return True
+
+
 @app.route("/accounting/<kind>/daily", methods=["GET", "POST"])
 @login_required
 def accounting_daily(kind):
@@ -3290,11 +3316,12 @@ def accounting_daily(kind):
             return redirect(url_for("accounting_daily", kind=kind, date=day_date))
 
         legacy_header = db.execute(
-            "SELECT ledger_version FROM daily_header WHERE es=? AND day_date=?",
+            "SELECT * FROM daily_header WHERE es=? AND day_date=?",
             (kind, day_date),
         ).fetchone()
-        if legacy_header and int(legacy_header["ledger_version"] or 1) == 1:
-            flash("هذا السجل محفوظ بالنظام المحاسبي السابق ومحمي من التعديل للحفاظ على مبالغه الأصلية.", "warning")
+        if (legacy_header and int(legacy_header["ledger_version"] or 1) == 1
+                and not _may_complete_nov8_legacy_day(db, kind, day_date, legacy_header)):
+            flash("هذا السجل يحتوي على بيانات قديمة أو اعتماد، وهو محمي من التحويل التلقائي.", "warning")
             return redirect(url_for("accounting_daily", kind=kind, date=day_date))
 
         cash_start = _to_float(request.form.get("cash_start"), 0)
@@ -3330,10 +3357,18 @@ def accounting_daily(kind):
             line_items.append((category, description, amount))
 
         sums = _daily_v2_sums([{"category": c, "amount": v} for c, _, v in line_items])
-        # Transaction: legacy rows remain untouched, including all financial approvals.
+        # Recheck the legacy record under the transaction before any write.
         with db:
+            current_header = db.execute(
+                "SELECT * FROM daily_header WHERE es=? AND day_date=?",
+                (kind, day_date),
+            ).fetchone()
+            if (current_header and int(current_header["ledger_version"] or 1) == 1
+                    and not _may_complete_nov8_legacy_day(db, kind, day_date, current_header)):
+                flash("تم إيقاف الحفظ: السجل القديم يحتوي على بيانات محفوظة.", "danger")
+                return redirect(url_for("accounting_daily", kind=kind, date=day_date))
             db.execute(
-                "INSERT OR IGNORE INTO daily_header (es, day_date, created_at) VALUES (?, ?, datetime('now'))",
+                "INSERT OR IGNORE INTO daily_header (es, day_date, created_at) VALUES (?, ?, datetime('now'))"
                 (kind, day_date),
             )
             header_id = db.execute(
@@ -3383,9 +3418,13 @@ def accounting_daily(kind):
         ).fetchall()
 
     is_v2 = not header or int(header["ledger_version"] or 1) == 2
-    legacy_read_only = not is_v2
+    eligible_nov8 = (header is not None and
+                     _may_complete_nov8_legacy_day(db, kind, day_date, header))
+    legacy_read_only = not is_v2 and not eligible_nov8
     if legacy_read_only:
-        can_edit_day = False  # Historical values must remain immutable.
+        can_edit_day = False  # Other historical values remain immutable.
+    elif eligible_nov8:
+        is_v2 = True  # Render new entry form without modifying the DB on GET.
     if header and is_v2:
         lines = db.execute("""
             SELECT category, description, amount FROM daily_line_items
