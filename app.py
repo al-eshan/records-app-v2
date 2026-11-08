@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 import os
+import math
 import json
 import hmac
 import hashlib
 import mimetypes
 import sqlite3
+import tempfile
 import uuid
 import urllib.request
 import urllib.error
@@ -17,6 +19,7 @@ from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 
 from flask import (
+    Response, stream_with_context,
     Flask, g, render_template,
     request, redirect, url_for, session, flash,
     send_file, send_from_directory
@@ -91,6 +94,7 @@ PERM_KEYS = [
     "whatsapp_branches",
     "whatsapp_numbers_manage",
     "permissions",
+    "database_export",
 ]
 
 PERM_LABELS = {
@@ -121,6 +125,7 @@ PERM_LABELS = {
     "whatsapp_branches": "واتساب الفروع",
     "whatsapp_numbers_manage": "إدارة أرقام واتساب",
     "permissions": "الصلاحيات",
+    "database_export": "تصدير قاعدة البيانات",
 }
 
 app = Flask(__name__)
@@ -1033,10 +1038,27 @@ def _accounting_alert_context():
     }
 
 
+def _can_export_database():
+    """Use current DB permissions, not potentially stale session permissions."""
+    if not session.get("logged_in") or not session.get("user_id"):
+        return False
+    if session.get("username") == MASTER_USERNAME:
+        return True
+    try:
+        row = get_db().execute(
+            "SELECT allowed FROM permissions WHERE user_id=? AND perm_key=?",
+            (session["user_id"], "database_export"),
+        ).fetchone()
+        return bool(row and row["allowed"])
+    except sqlite3.Error:
+        return False
+
+
 @app.context_processor
 def inject_helpers():
     return {
         "APP_TITLE": APP_TITLE,
+        "can_export_database": _can_export_database(),
         "days_left": days_left,
         "status_color": status_color,
         "perm_labels": PERM_LABELS,
@@ -1080,6 +1102,73 @@ def login():
         flash("اسم المستخدم أو كلمة المرور غير صحيحة", "danger")
 
     return render_template("login.html")
+
+
+# =========================
+# Database backup export (read-only online SQLite backup)
+# =========================
+@app.route("/database/export", methods=["GET"])
+@login_required
+def export_database():
+    # Check fresh DB permission on every request, not the browser session.
+    if not _can_export_database():
+        return render_template("no_permission.html"), 403
+
+    source_path = os.path.abspath(DATABASE)
+    if not os.path.isfile(source_path):
+        app.logger.error("Database export failed: source database is missing")
+        return "تعذر العثور على قاعدة البيانات", 503
+
+    backup_path = None
+    try:
+        # Temp file is separate from the live database. Never overwrite data.db.
+        with tempfile.NamedTemporaryFile(prefix="eshan_export_", suffix=".db", delete=False) as f:
+            backup_path = f.name
+
+        # Opening the live database in read-only mode prevents accidental writes.
+        # SQLite online backup keeps a transactionally consistent snapshot.
+        source_uri = "file:" + urllib.parse.quote(source_path, safe="/") + "?mode=ro"
+        with sqlite3.connect(source_uri, uri=True, timeout=30) as source:
+            with sqlite3.connect(backup_path, timeout=30) as destination:
+                source.backup(destination, pages=256, sleep=0.1)
+                status = destination.execute("PRAGMA integrity_check").fetchone()
+                if not status or status[0] != "ok":
+                    raise sqlite3.DatabaseError("Backup failed integrity_check")
+
+        size = os.path.getsize(backup_path)
+        filename = "Al_Eshan_DB_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".db"
+
+        @stream_with_context
+        def read_backup():
+            try:
+                with open(backup_path, "rb") as f:
+                    while True:
+                        chunk = f.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+            finally:
+                try:
+                    os.unlink(backup_path)
+                except OSError:
+                    app.logger.warning("Unable to remove a temporary database export")
+
+        result = Response(read_backup(), mimetype="application/octet-stream")
+        result.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        result.headers["Content-Length"] = str(size)
+        result.headers["Cache-Control"] = "private, no-store, max-age=0"
+        result.headers["Pragma"] = "no-cache"
+        result.headers["X-Content-Type-Options"] = "nosniff"
+        app.logger.info("Database export requested by user_id=%s", session.get("user_id"))
+        return result
+    except (sqlite3.Error, OSError) as exc:
+        app.logger.exception("Database export failed: %s", type(exc).__name__)
+        if backup_path and os.path.exists(backup_path):
+            try:
+                os.unlink(backup_path)
+            except OSError:
+                pass
+        return "تعذر إنشاء النسخة الاحتياطية؛ لم يتم تعديل قاعدة البيانات الأصلية", 503
 
 
 @app.route("/logout")
@@ -2992,6 +3081,21 @@ def ensure_daily_accounting_schema(db):
     if "financial_approval_by" not in cols:
         db.execute("ALTER TABLE daily_header ADD COLUMN financial_approval_by TEXT")
 
+    # v2 ledger: existing days remain version 1, and are never rewritten by migration.
+    if "ledger_version" not in cols:
+        db.execute("ALTER TABLE daily_header ADD COLUMN ledger_version INTEGER NOT NULL DEFAULT 1")
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS daily_line_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            header_id INTEGER NOT NULL,
+            category TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            amount REAL NOT NULL DEFAULT 0,
+            FOREIGN KEY(header_id) REFERENCES daily_header(id) ON DELETE CASCADE
+        )
+    """)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_daily_line_items_header ON daily_line_items(header_id)")
+
     gen_cols = [r[1] for r in db.execute("PRAGMA table_info(daily_expenses_general)").fetchall()]
     if "payment_kind" not in gen_cols:
         db.execute("ALTER TABLE daily_expenses_general ADD COLUMN payment_kind TEXT NOT NULL DEFAULT 'debt'")
@@ -3072,6 +3176,43 @@ def _can_edit_accounting_day(day_date: str, perms: dict):
     return False, False
 
 
+DAILY_LINE_CATEGORIES = (
+    "inputs", "cash_returns", "debt", "payment", "tamara", "emkan",
+    "petty", "mada", "bank_transfers", "cash_received",
+)
+
+
+def _daily_v2_sums(lines):
+    sums = {key: 0.0 for key in DAILY_LINE_CATEGORIES}
+    for line in lines:
+        category = line["category"]
+        if category in sums:
+            amount = abs(_to_float(line["amount"]))
+            sums[category] += amount
+    return sums
+
+
+def _daily_v2_totals(header, lines):
+    sums = _daily_v2_sums(lines)
+    cash_start = _to_float(header["cash_start"]) if header else 0.0
+    cash_end = _to_float(header["cash_end"]) if header else 0.0
+    cash_received = sums["cash_received"]
+    mada = sums["mada"]
+    bank_transfers = sums["bank_transfers"]
+    tamara = sums["tamara"] + sums["emkan"]
+    general = sums["debt"] - sums["payment"]
+    total_in_enjaz = _to_float(header["total_in_enjaz"]) if header else 0.0
+    total_overall = (cash_end + cash_received + tamara + mada + bank_transfers
+                     + sums["inputs"] + general + sums["petty"] + sums["cash_returns"] - cash_start)
+    return dict(inputs=sums["inputs"], cash_returns=sums["cash_returns"],
+                tamara=tamara, general=general, petty=sums["petty"],
+                cash_start=cash_start, cash_end=cash_end,
+                cash_diff=cash_end-cash_start+cash_received,
+                cash_received=cash_received, mada=mada, bank_transfers=bank_transfers,
+                total_in_enjaz=total_in_enjaz, total_overall=total_overall,
+                error=total_overall-total_in_enjaz)
+
+
 @app.route("/accounting/<kind>/daily", methods=["GET", "POST"])
 @login_required
 def accounting_daily(kind):
@@ -3145,117 +3286,73 @@ def accounting_daily(kind):
             )
             return redirect(url_for("accounting_daily", kind=kind, date=day_date))
 
-        cash_start = _to_float(request.form.get("cash_start"), 0)
-        cash_end = _to_float(request.form.get("cash_end"), 0)
-        cash_received = _to_float(request.form.get("cash_received"), 0)
-        mada = _to_float(request.form.get("mada"), 0)
-        bank_transfers = _to_float(request.form.get("bank_transfers"), 0)
-        total_in_enjaz = _to_float(request.form.get("total_in_enjaz"), 0)
-        notes = (request.form.get("notes") or "").strip() or None
+        if request.form.get("action") != "save":
+            return redirect(url_for("accounting_daily", kind=kind, date=day_date))
 
-        db.execute(
-            "INSERT OR IGNORE INTO daily_header (es, day_date, created_at) VALUES (?, ?, datetime('now'))",
-            (kind, day_date),
-        )
-
-        header = db.execute(
-            "SELECT id FROM daily_header WHERE es=? AND day_date=?",
+        legacy_header = db.execute(
+            "SELECT ledger_version FROM daily_header WHERE es=? AND day_date=?",
             (kind, day_date),
         ).fetchone()
+        if legacy_header and int(legacy_header["ledger_version"] or 1) == 1:
+            flash("هذا السجل محفوظ بالنظام المحاسبي السابق ومحمي من التعديل للحفاظ على مبالغه الأصلية.", "warning")
+            return redirect(url_for("accounting_daily", kind=kind, date=day_date))
 
-        header_id = header["id"]
+        cash_start = _to_float(request.form.get("cash_start"), 0)
+        cash_end = _to_float(request.form.get("cash_end"), 0)
+        total_in_enjaz = _to_float(request.form.get("total_in_enjaz"), 0)
+        notes = (request.form.get("notes") or "").strip() or None
+        categories = request.form.getlist("line_category")
+        descriptions = request.form.getlist("line_description")
+        amounts = request.form.getlist("line_amount")
+        if not (len(categories) == len(descriptions) == len(amounts)):
+            flash("بيانات صفوف العمليات غير مكتملة.", "danger")
+            return redirect(url_for("accounting_daily", kind=kind, date=day_date))
+        if len(categories) > 500:
+            flash("الحد الأقصى 500 عملية في اليوم.", "danger")
+            return redirect(url_for("accounting_daily", kind=kind, date=day_date))
 
-        db.execute("""
-            UPDATE daily_header
-            SET cash_start=?,
-                cash_end=?,
-                cash_received=?,
-                mada=?,
-                bank_transfers=?,
-                total_in_enjaz=?,
-                notes=?,
-                updated_at=datetime('now')
-            WHERE id=?
-        """, (
-            cash_start,
-            cash_end,
-            cash_received,
-            mada,
-            bank_transfers,
-            total_in_enjaz,
-            notes,
-            header_id,
-        ))
+        line_items = []
+        for category, description, amount_raw in zip(categories, descriptions, amounts):
+            category = (category or "").strip()
+            description = (description or "").strip()[:300]
+            if category not in DAILY_LINE_CATEGORIES:
+                flash("حالة العملية غير صحيحة.", "danger")
+                return redirect(url_for("accounting_daily", kind=kind, date=day_date))
+            if not (description or (amount_raw or "").strip()):
+                continue
+            try:
+                amount = float(str(amount_raw or "0").replace(",", ""))
+                if not math.isfinite(amount) or amount < 0:
+                    raise ValueError("Invalid amount")
+            except ValueError:
+                flash("المبلغ يجب أن يكون رقمًا موجبًا أو صفرًا.", "danger")
+                return redirect(url_for("accounting_daily", kind=kind, date=day_date))
+            line_items.append((category, description, amount))
 
-        db.execute("DELETE FROM daily_inputs WHERE header_id=?", (header_id,))
-        db.execute("DELETE FROM daily_expenses_general WHERE header_id=?", (header_id,))
-        db.execute("DELETE FROM daily_expenses_petty WHERE header_id=?", (header_id,))
+        sums = _daily_v2_sums([{"category": c, "amount": v} for c, _, v in line_items])
+        # Transaction: legacy rows remain untouched, including all financial approvals.
+        with db:
+            db.execute(
+                "INSERT OR IGNORE INTO daily_header (es, day_date, created_at) VALUES (?, ?, datetime('now'))",
+                (kind, day_date),
+            )
+            header_id = db.execute(
+                "SELECT id FROM daily_header WHERE es=? AND day_date=?", (kind, day_date)
+            ).fetchone()["id"]
+            db.execute("""
+                UPDATE daily_header
+                   SET cash_start=?, cash_end=?, total_in_enjaz=?, notes=?,
+                       cash_received=?, mada=?, bank_transfers=?, ledger_version=2,
+                       updated_at=datetime('now')
+                 WHERE id=?
+            """, (cash_start, cash_end, total_in_enjaz, notes,
+                  sums["cash_received"], sums["mada"], sums["bank_transfers"], header_id))
+            db.execute("DELETE FROM daily_line_items WHERE header_id=?", (header_id,))
+            db.executemany("""
+                INSERT INTO daily_line_items (header_id, category, description, amount)
+                VALUES (?, ?, ?, ?)
+            """, [(header_id, c, d, v) for c, d, v in line_items])
 
-        input_types = request.form.getlist("input_type")
-        input_amounts = request.form.getlist("input_amount")
-
-        for t, a in zip(input_types, input_amounts):
-            t = (t or "").strip()
-            amt = _to_float(a, 0)
-
-            if t or amt:
-                if not t:
-                    t = "(بدون عنوان)"
-
-                db.execute(
-                    "INSERT INTO daily_inputs (header_id, input_type, amount) VALUES (?, ?, ?)",
-                    (header_id, t, amt),
-                )
-
-        gen_types = request.form.getlist("gen_type")
-        gen_kinds = request.form.getlist("gen_kind")
-        gen_amounts = request.form.getlist("gen_amount")
-
-        for t, k, a in zip(gen_types, gen_kinds, gen_amounts):
-            t = (t or "").strip()
-            k = (k or "debt").strip()
-            amt = _to_float(a, 0)
-
-            if k not in ("debt", "payment", "tamara", "emkan"):
-                k = "debt"
-
-            if k == "payment":
-                amt = -abs(amt)
-            else:
-                amt = abs(amt)
-
-            if t or amt:
-                if not t:
-                    t = "(بدون عنوان)"
-
-                db.execute("""
-                    INSERT INTO daily_expenses_general
-                    (header_id, expense_type, payment_kind, amount)
-                    VALUES (?, ?, ?, ?)
-                """, (
-                    header_id,
-                    t,
-                    k,
-                    amt
-                ))
-
-        petty_types = request.form.getlist("petty_type")
-        petty_amounts = request.form.getlist("petty_amount")
-
-        for t, a in zip(petty_types, petty_amounts):
-            t = (t or "").strip()
-            amt = _to_float(a, 0)
-
-            if t or amt:
-                if not t:
-                    t = "(بدون عنوان)"
-
-                db.execute(
-                    "INSERT INTO daily_expenses_petty (header_id, expense_type, amount) VALUES (?, ?, ?)",
-                    (header_id, t, amt),
-                )
-
-        db.commit()
         flash("تم حفظ المحاسبة اليومية بنجاح", "success")
         return redirect(url_for("accounting_daily", kind=kind, date=day_date))
 
@@ -3284,6 +3381,29 @@ def accounting_daily(kind):
             "SELECT expense_type, amount FROM daily_expenses_petty WHERE header_id=? ORDER BY id",
             (header_id,),
         ).fetchall()
+
+    is_v2 = not header or int(header["ledger_version"] or 1) == 2
+    legacy_read_only = not is_v2
+    if legacy_read_only:
+        can_edit_day = False  # Historical values must remain immutable.
+    if header and is_v2:
+        lines = db.execute("""
+            SELECT category, description, amount FROM daily_line_items
+             WHERE header_id=? ORDER BY id
+        """, (header_id,)).fetchall()
+    elif header:
+        # Legacy presentation only: no write/migration of previous records.
+        lines = ([{"category": "inputs", "description": r["input_type"], "amount": abs(r["amount"])} for r in inputs]
+                 + [{"category": r["payment_kind"], "description": r["expense_type"], "amount": abs(r["amount"])} for r in gen]
+                 + [{"category": "petty", "description": r["expense_type"], "amount": abs(r["amount"])} for r in petty])
+        for cat in ("cash_received", "mada", "bank_transfers"):
+            if _to_float(header[cat]):
+                lines.append({"category": cat, "description": "", "amount": abs(_to_float(header[cat]))})
+        old_payments = db.execute("SELECT pay_type, amount FROM daily_tamara_emkan WHERE header_id=?", (header_id,)).fetchall()
+        lines.extend({"category": "tamara" if "tamara" in str(r["pay_type"]).lower() else "emkan",
+                      "description": str(r["pay_type"]), "amount": abs(r["amount"])} for r in old_payments)
+    else:
+        lines = []
 
     def _sum(rows):
         return float(sum([_to_float(r["amount"], 0) for r in rows]))
@@ -3330,6 +3450,9 @@ def accounting_daily(kind):
     ) - cash_start
 
     totals["error"] = totals["total_overall"] - total_in_enjaz
+    totals["cash_returns"] = 0.0
+    if is_v2:
+        totals = _daily_v2_totals(header, lines)
 
     return render_template(
         "accounting_daily.html",
@@ -3339,7 +3462,9 @@ def accounting_daily(kind):
         inputs=inputs,
         gen=gen,
         petty=petty,
+        lines=lines,
         totals=totals,
+        legacy_read_only=legacy_read_only,
         can_edit_day=can_edit_day,
         has_after_48h_override=has_after_48h_override,
         edit_deadline=edit_deadline,
@@ -3370,6 +3495,7 @@ def accounting_movements(kind):
                cash_start,
                cash_end,
                cash_received,
+               ledger_version,
                mada,
                bank_transfers,
                total_in_enjaz,
@@ -3398,6 +3524,7 @@ def accounting_movements(kind):
     overall_cash_end = 0.0
     overall_cash_diff = 0.0
     overall_cash_received = 0.0
+    overall_cash_returns = 0.0
     overall_mada = 0.0
     overall_bank_transfers = 0.0
     overall_total_in_enjaz = 0.0
@@ -3444,6 +3571,13 @@ def accounting_movements(kind):
             (hid,)
         ).fetchone()["s"], 0)
 
+        is_v2 = int(h["ledger_version"] or 1) == 2
+        if is_v2:
+            day_lines = db.execute(
+                "SELECT category, amount FROM daily_line_items WHERE header_id=?", (hid,)
+            ).fetchall()
+            v2_totals = _daily_v2_totals(h, day_lines)
+
         cash_start = _to_float(h["cash_start"], 0)
         cash_end = _to_float(h["cash_end"], 0)
         cash_received = _to_float(h["cash_received"], 0)
@@ -3463,6 +3597,19 @@ def accounting_movements(kind):
             + total_petty
         ) - cash_start
 
+        cash_returns = 0.0
+        if is_v2:
+            total_inputs = v2_totals["inputs"]
+            total_tamara = v2_totals["tamara"]
+            total_general = v2_totals["general"]
+            total_petty = v2_totals["petty"]
+            cash_received = v2_totals["cash_received"]
+            mada = v2_totals["mada"]
+            bank_transfers = v2_totals["bank_transfers"]
+            cash_diff = v2_totals["cash_diff"]
+            total_overall = v2_totals["total_overall"]
+            cash_returns = v2_totals["cash_returns"]
+
         err_val = total_overall - total_in_enjaz
 
         rows.append({
@@ -3471,6 +3618,7 @@ def accounting_movements(kind):
             "cash_end": cash_end,
             "cash_diff": cash_diff,
             "cash_received": cash_received,
+            "cash_returns": cash_returns,
             "tamara": total_tamara,
             "mada": mada,
             "bank_transfers": bank_transfers,
@@ -3491,6 +3639,7 @@ def accounting_movements(kind):
         overall_cash_end += cash_end
         overall_cash_diff += cash_diff
         overall_cash_received += cash_received
+        overall_cash_returns += cash_returns
         overall_mada += mada
         overall_bank_transfers += bank_transfers
         overall_total_in_enjaz += total_in_enjaz
@@ -3504,6 +3653,7 @@ def accounting_movements(kind):
         + overall_inputs
         + overall_general
         + overall_petty
+        + overall_cash_returns
     ) - overall_cash_start
 
     overall_error = overall_total_overall - overall_total_in_enjaz
@@ -3517,6 +3667,7 @@ def accounting_movements(kind):
         "cash_end": overall_cash_end,
         "cash_diff": overall_cash_diff,
         "cash_received": overall_cash_received,
+        "cash_returns": overall_cash_returns,
         "mada": overall_mada,
         "bank_transfers": overall_bank_transfers,
         "total_in_enjaz": overall_total_in_enjaz,

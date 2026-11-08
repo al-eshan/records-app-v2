@@ -1,0 +1,19 @@
+/* Language selector: independent of existing accounting and WhatsApp styles */
+.esh-language-toolbar{position:fixed;top:10px;left:12px;z-index:1450;display:flex;align-items:center;gap:5px;padding:5px 7px;border:1px solid rgba(255,255,255,.2);background:#22282f;color:#f8fafc;border-radius:12px;box-shadow:0 3px 10px rgba(0,0,0,.22);direction:ltr;font-size:12px}
+.esh-language-caption{padding:0 5px;white-space:nowrap;color:#d8dee5}
+.esh-language-choice{border:1px solid #66717e;border-radius:8px;background:#3a424d;color:#f9fafb;padding:5px 10px;cursor:pointer;white-space:nowrap}
+.esh-language-choice[aria-pressed="true"]{background:#1263e5;border-color:#1263e5;color:white;font-weight:700}
+.esh-language-choice:focus-visible{outline:2px solid #ffe77a;outline-offset:2px}
+html[dir="ltr"] .sidebar{left:0;right:auto}
+@media(min-width:768px){html[dir="ltr"] .main-content{margin-left:var(--sidebar-w);margin-right:0}}
+@media(max-width:767.98px){
+ .esh-language-toolbar{top:10px;left:65px;right:auto;padding:4px;gap:3px}
+ .esh-language-caption{display:none}
+ .esh-language-choice{padding:6px 8px}
+ html[dir="ltr"] .sidebar{left:-320px;right:auto;transition:left .25s ease}
+ html[dir="ltr"] .sidebar.open{left:0;right:auto}
+ html[dir="ltr"] .mobile-menu-btn{left:10px;right:auto}
+ html[dir="ltr"] .main-content{margin-left:0;margin-right:0}
+}
+/* Keep phone numbers, accounting amounts and dates left-to-right regardless of UI locale. */
+input[type="number"],input[type="tel"],input[type="date"],input[type="time"],.esh-keep-ltr{direction:ltr;unicode-bidi:plaintext}

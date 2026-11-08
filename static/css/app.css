@@ -492,3 +492,38 @@ body{
     max-width: 100% !important;
   }
 }
+
+
+
+/* =========================================================
+   Global native dropdown contrast fix – Al-Eshan
+   Keep the CLOSED control dark; make OPEN options readable.
+   Covers accounting, WhatsApp, admin and other pages.
+========================================================= */
+select option,
+select optgroup,
+.form-select option,
+.form-select optgroup,
+.form-control option,
+.form-control optgroup {
+  background-color: #ffffff !important;
+  color: #20252b !important;
+  font-weight: 600;
+}
+
+select option:checked,
+.form-select option:checked {
+  background-color: #dce9ff !important;
+  color: #152337 !important;
+}
+
+select option:disabled,
+.form-select option:disabled {
+  color: #68717b !important;
+}
+
+/* Explicit native popup palette, independent from dark parent cards. */
+select,
+.form-select {
+  color-scheme: light;
+}
