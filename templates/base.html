@@ -145,11 +145,7 @@
 
 <body class="app-shell">
 
-  <div class="esh-language-toolbar" aria-label="Language / اللغة" data-no-translate>
-    <span class="esh-language-caption">اللغة / Language</span>
-    <button type="button" class="esh-language-choice" data-lang-choice="ar" aria-pressed="true">العربية</button>
-    <button type="button" class="esh-language-choice" data-lang-choice="en" aria-pressed="false">English</button>
-  </div>
+
 
   <!-- خلفية ثابتة -->
   <div
@@ -300,7 +296,7 @@
           <a href="{{ url_for('export_database') }}"
              class="menu-card {% if request.path == '/database/export' %}active{% endif %}"
              onclick="return confirm('هل تريد تنزيل نسخة احتياطية من قاعدة بيانات آل عشان الآن؟ احتفظ بها في مكان آمن.');">
-            💾 تصدير قاعدة البيانات
+            💾 تصدير البيانات
           </a>
         {% endif %}
 
@@ -308,7 +304,7 @@
 
           <a
             href="{{ url_for('dashboard') }}"
-            class="menu-card menu-card-wide {% if request.path.startswith('/dashboard') %}active{% endif %}"
+            class="menu-card {% if request.path.startswith('/dashboard') %}active{% endif %}"
           >
             📊 لوحة المتابعة
           </a>
@@ -322,7 +318,7 @@
             href="{{ url_for('whatsapp_branches') }}"
             class="menu-card menu-card-whatsapp {% if request.path.startswith('/whatsapp') %}active{% endif %}"
           >
-            💬 واتساب الفروع
+            💬 WhatsApp
             {% if whatsapp_unread_count|default(0) > 0 %}
               <span class="badge rounded-pill bg-danger ms-1">{{ whatsapp_unread_count }}</span>
             {% endif %}
@@ -352,7 +348,11 @@
           >
             خروج
           </a>
-
+          <div class="esh-language-toolbar sidebar-language-toolbar" aria-label="Language / اللغة" data-no-translate>
+            <span class="esh-language-caption">اللغة / Language</span>
+            <button type="button" class="esh-language-choice" data-lang-choice="ar" aria-pressed="true">العربية</button>
+            <button type="button" class="esh-language-choice" data-lang-choice="en" aria-pressed="false">English</button>
+          </div>
         </div>
 
       </nav>

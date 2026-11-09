@@ -17,3 +17,14 @@ html[dir="ltr"] .sidebar{left:0;right:auto}
 }
 /* Keep phone numbers, accounting amounts and dates left-to-right regardless of UI locale. */
 input[type="number"],input[type="tel"],input[type="date"],input[type="time"],.esh-keep-ltr{direction:ltr;unicode-bidi:plaintext}
+
+/* Language control follows Logout in the sidebar (not fixed over page content). */
+.sidebar .sidebar-language-toolbar.esh-language-toolbar{
+  position:static;top:auto;left:auto;right:auto;z-index:auto;
+  width:100%;box-sizing:border-box;justify-content:center;
+  margin-top:10px;padding:8px 5px;flex-wrap:wrap;
+}
+@media(max-width:767.98px){
+  .sidebar .sidebar-language-toolbar.esh-language-toolbar{top:auto;left:auto;right:auto;padding:8px 5px;gap:5px}
+  .sidebar .sidebar-language-toolbar .esh-language-caption{display:inline}
+}

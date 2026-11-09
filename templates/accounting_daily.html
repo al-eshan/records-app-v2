@@ -102,7 +102,17 @@
         </div>
 
         {% if legacy_read_only %}
-          <div class="alert alert-info mt-3 mb-0 edit-lock-alert">🔒 هذا سجل محاسبي قديم محفوظ كما هو، للعرض فقط حمايةً للأرقام السابقة. تظل اعتمادات الإدارة متاحة للمصرح لهم.</div>
+          <div class="alert alert-info mt-3 mb-0 edit-lock-alert">
+            🔒 هذا سجل بالنظام المحاسبي القديم. يحافظ عرض المحاسبة الحالية على المبالغ الأصلية.
+            {% if can_legacy_edit %}
+              <div class="mt-2"><a class="btn btn-warning btn-sm fw-bold"
+                href="{{ url_for('accounting_daily_legacy_edit',kind=kind,date=day_date) }}">
+                ✏️ تعديل السجل القديم (الإدارة)
+              </a></div>
+            {% else %}
+              <span>التعديل متاح للإدارة المخولة فقط.</span>
+            {% endif %}
+          </div>
         {% elif not can_edit_day %}
           <div class="alert alert-danger mt-3 mb-0 edit-lock-alert">🔒 تم إغلاق تعديل هذا التاريخ بعد مرور 48 ساعة. يمكنك الاستعراض فقط، والتعديل يحتاج صلاحية الإدارة.</div>
         {% elif has_after_48h_override %}

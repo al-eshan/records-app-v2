@@ -3162,6 +3162,15 @@ def _accounting_edit_deadline(day_date: str):
     return datetime.combine(d, datetime.min.time()) + timedelta(hours=48)
 
 
+def _is_accounting_admin_editor(perms=None):
+    """Master account and users explicitly granted late-accounting-edit permission."""
+    if session.get("username") == MASTER_USERNAME:
+        return True
+    if perms is None:
+        perms = session.get("perms") or {}
+    return bool(perms.get("accounting_edit_after_48h"))
+
+
 def _can_edit_accounting_day(day_date: str, perms: dict):
     deadline = _accounting_edit_deadline(day_date)
     if deadline is None:
@@ -3170,7 +3179,7 @@ def _can_edit_accounting_day(day_date: str, perms: dict):
     if _saudi_now_naive() < deadline:
         return True, False
 
-    if bool((perms or {}).get("accounting_edit_after_48h")):
+    if _is_accounting_admin_editor(perms):
         return True, True
 
     return False, False
@@ -3508,7 +3517,198 @@ def accounting_daily(kind):
         has_after_48h_override=has_after_48h_override,
         edit_deadline=edit_deadline,
         can_finance_approve=can_finance_approve,
+        can_legacy_edit=bool(legacy_read_only and _is_accounting_admin_editor(perms)),
     )
+
+
+def _daily_legacy_totals(header, inputs, gen, petty):
+    """Preserve v1 arithmetic: repayments were recorded as negative amounts."""
+    def total(rows):
+        return sum(_to_float(row["amount"]) for row in rows)
+    cash_start = _to_float(header["cash_start"])
+    cash_end = _to_float(header["cash_end"])
+    cash_received = _to_float(header["cash_received"])
+    mada = _to_float(header["mada"])
+    bank_transfers = _to_float(header["bank_transfers"])
+    enjaz = _to_float(header["total_in_enjaz"])
+    tamara = sum(_to_float(row["amount"]) for row in gen
+                 if row["payment_kind"] in ("tamara", "emkan"))
+    general = sum(_to_float(row["amount"]) for row in gen
+                  if row["payment_kind"] in ("debt", "payment"))
+    inputs_sum = total(inputs)
+    petty_sum = total(petty)
+    overall = (cash_end + cash_received + tamara + mada + bank_transfers
+               + inputs_sum + general + petty_sum - cash_start)
+    return dict(cash_start=cash_start, cash_end=cash_end,
+                cash_diff=cash_end-cash_start+cash_received,
+                cash_received=cash_received, mada=mada,
+                bank_transfers=bank_transfers, total_in_enjaz=enjaz,
+                tamara=tamara, general=general, inputs=inputs_sum,
+                petty=petty_sum, total_overall=overall, error=overall-enjaz)
+
+
+def _ensure_daily_edit_history(db):
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS daily_edit_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          header_id INTEGER NOT NULL,
+          es TEXT NOT NULL,
+          day_date TEXT NOT NULL,
+          editor TEXT NOT NULL,
+          edited_at TEXT NOT NULL DEFAULT (datetime('now')),
+          previous_data TEXT NOT NULL
+        )
+    """)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_daily_edit_history_header "
+               "ON daily_edit_history(header_id)")
+
+
+def _legacy_form_number(raw):
+    try:
+        num = float(str(raw or '0').replace(',', ''))
+    except (ValueError, TypeError):
+        raise ValueError('invalid number')
+    if not math.isfinite(num):
+        raise ValueError('non-finite number')
+    return num
+
+
+@app.route("/accounting/<kind>/daily/legacy-edit", methods=["GET", "POST"])
+@login_required
+def accounting_daily_legacy_edit(kind):
+    """Admin-only edit of v1 data in its original schema, without v2 conversion."""
+    kind, err = _require_accounting_kind_perm(kind)
+    if err:
+        return err
+    if not _is_accounting_admin_editor():
+        return render_template("no_permission.html"), 403
+
+    day_date = (request.args.get('date') or '').strip()
+    try:
+        datetime.strptime(day_date, '%Y-%m-%d')
+    except ValueError:
+        return 'Invalid accounting date', 400
+
+    db = get_db()
+    ensure_daily_accounting_schema(db)
+    header = db.execute('SELECT * FROM daily_header WHERE es=? AND day_date=?',
+                        (kind, day_date)).fetchone()
+    if not header or int(header['ledger_version'] or 1) != 1:
+        flash('هذا التاريخ ليس من سجلات النظام المحاسبي القديم.', 'warning')
+        return redirect(url_for('accounting_daily', kind=kind, date=day_date))
+
+    if request.method == 'POST':
+        if request.form.get('action') != 'save':
+            return redirect(url_for('accounting_daily_legacy_edit', kind=kind, date=day_date))
+        if request.form.get('day_date') != day_date or request.form.get('confirm_legacy_edit') != 'yes':
+            flash('يجب تأكيد تعديل السجل القديم والتأكد من التاريخ قبل الحفظ.', 'danger')
+            return redirect(url_for('accounting_daily_legacy_edit', kind=kind, date=day_date))
+
+        try:
+            cash_start = _legacy_form_number(request.form.get('cash_start'))
+            cash_end = _legacy_form_number(request.form.get('cash_end'))
+            cash_received = _legacy_form_number(request.form.get('cash_received'))
+            mada = _legacy_form_number(request.form.get('mada'))
+            bank_transfers = _legacy_form_number(request.form.get('bank_transfers'))
+            total_in_enjaz = _legacy_form_number(request.form.get('total_in_enjaz'))
+            notes = (request.form.get('notes') or '').strip() or None
+
+            input_types = request.form.getlist('input_type')
+            input_amounts = request.form.getlist('input_amount')
+            gen_types = request.form.getlist('gen_type')
+            gen_kinds = request.form.getlist('gen_kind')
+            gen_amounts = request.form.getlist('gen_amount')
+            petty_types = request.form.getlist('petty_type')
+            petty_amounts = request.form.getlist('petty_amount')
+            if (len(input_types) != len(input_amounts) or
+                    len(gen_types) != len(gen_kinds) or
+                    len(gen_types) != len(gen_amounts) or
+                    len(petty_types) != len(petty_amounts) or
+                    max(len(input_types), len(gen_types), len(petty_types)) > 500):
+                raise ValueError('mismatched rows')
+
+            new_inputs = []
+            for name, amount in zip(input_types, input_amounts):
+                name = (name or '').strip()
+                value = _legacy_form_number(amount)
+                if name or value:
+                    new_inputs.append((name or '(بدون عنوان)', value))
+
+            new_gen = []
+            for name, item_kind, amount in zip(gen_types, gen_kinds, gen_amounts):
+                name = (name or '').strip()
+                item_kind = (item_kind or 'debt').strip()
+                if item_kind not in ('debt', 'payment', 'tamara', 'emkan'):
+                    raise ValueError('invalid payment kind')
+                value = _legacy_form_number(amount)
+                value = -abs(value) if item_kind == 'payment' else abs(value)
+                if name or value:
+                    new_gen.append((name or '(بدون عنوان)', item_kind, value))
+
+            new_petty = []
+            for name, amount in zip(petty_types, petty_amounts):
+                name = (name or '').strip()
+                value = _legacy_form_number(amount)
+                if name or value:
+                    new_petty.append((name or '(بدون عنوان)', value))
+        except ValueError:
+            flash('تعذر الحفظ: تحقق من صحة المبالغ والصفوف ولا تترك قيمة غير رقمية.', 'danger')
+            return redirect(url_for('accounting_daily_legacy_edit', kind=kind, date=day_date))
+
+        with db:
+            # Recheck while writing; ensure no simultaneous v2 conversion occurred.
+            current = db.execute('SELECT * FROM daily_header WHERE id=? AND es=? AND day_date=?',
+                                 (header['id'], kind, day_date)).fetchone()
+            if not current or int(current['ledger_version'] or 1) != 1:
+                flash('تغير نوع السجل؛ أُوقف الحفظ لحماية البيانات.', 'danger')
+                return redirect(url_for('accounting_daily', kind=kind, date=day_date))
+            _ensure_daily_edit_history(db)
+            snapshot = {'header': dict(current)}
+            for table in ('daily_inputs', 'daily_expenses_general',
+                          'daily_expenses_petty', 'daily_tamara_emkan'):
+                snapshot[table] = [dict(row) for row in db.execute(
+                    f'SELECT * FROM {table} WHERE header_id=? ORDER BY id', (current['id'],)
+                ).fetchall()]
+            db.execute('''INSERT INTO daily_edit_history
+                          (header_id,es,day_date,editor,previous_data)
+                          VALUES (?,?,?,?,?)''',
+                       (current['id'], kind, day_date,
+                        session.get('username') or '', json.dumps(snapshot, ensure_ascii=False)))
+            db.execute('''UPDATE daily_header
+                          SET cash_start=?, cash_end=?, cash_received=?, mada=?,
+                              bank_transfers=?, total_in_enjaz=?, notes=?,
+                              financial_approval_status='',
+                              financial_approval_updated_at=NULL,
+                              financial_approval_by=NULL,
+                              updated_at=datetime('now')
+                          WHERE id=?''',
+                       (cash_start, cash_end, cash_received, mada,
+                        bank_transfers, total_in_enjaz, notes, current['id']))
+            db.execute('DELETE FROM daily_inputs WHERE header_id=?', (current['id'],))
+            db.execute('DELETE FROM daily_expenses_general WHERE header_id=?', (current['id'],))
+            db.execute('DELETE FROM daily_expenses_petty WHERE header_id=?', (current['id'],))
+            db.executemany('INSERT INTO daily_inputs(header_id,input_type,amount) VALUES (?,?,?)',
+                           [(current['id'], name, value) for name, value in new_inputs])
+            db.executemany('''INSERT INTO daily_expenses_general
+                              (header_id,expense_type,payment_kind,amount) VALUES (?,?,?,?)''',
+                           [(current['id'], name, category, value)
+                            for name, category, value in new_gen])
+            db.executemany('INSERT INTO daily_expenses_petty(header_id,expense_type,amount) VALUES (?,?,?)',
+                           [(current['id'], name, value) for name, value in new_petty])
+
+        flash('حُفظ تعديل الإدارة مع أرشفة البيانات السابقة. يلزم اعتماد الإدارة المالية مجددًا.', 'success')
+        return redirect(url_for('accounting_daily', kind=kind, date=day_date))
+
+    inputs = db.execute('SELECT * FROM daily_inputs WHERE header_id=? ORDER BY id',
+                        (header['id'],)).fetchall()
+    gen = db.execute('SELECT * FROM daily_expenses_general WHERE header_id=? ORDER BY id',
+                     (header['id'],)).fetchall()
+    petty = db.execute('SELECT * FROM daily_expenses_petty WHERE header_id=? ORDER BY id',
+                       (header['id'],)).fetchall()
+    return render_template('accounting_daily_legacy_admin.html', kind=kind,
+                           day_date=day_date, header=header, inputs=inputs,
+                           gen=gen, petty=petty,
+                           totals=_daily_legacy_totals(header, inputs, gen, petty))
 
 
 @app.route("/accounting/<kind>/movements", methods=["GET"])

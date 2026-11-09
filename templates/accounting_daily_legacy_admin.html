@@ -1,0 +1,463 @@
+{% extends "base.html" %}
+{% block content %}
+
+<style>
+.daily-table-title{
+  min-height:80px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  line-height:1.4;
+}
+
+.daily-table-card{
+  height:100%;
+}
+
+.daily-table-card table{
+  table-layout:fixed;
+}
+
+.daily-select{
+  background:#495057 !important;
+  color:#fff !important;
+  border:1px solid #6c757d !important;
+  font-weight:700;
+  text-align:center;
+}
+
+.daily-select option{
+  background:#343a40;
+  color:#fff;
+}
+
+.finance-approval-box{
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:12px;
+  padding:12px;
+  background:rgba(255,255,255,.03);
+}
+
+.finance-approval-actions{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+
+.finance-approval-actions .btn{
+  min-height:48px;
+  font-weight:700;
+}
+
+.edit-lock-alert{
+  border-radius:10px;
+}
+
+</style>
+
+<div class="page-tiles" style="max-width: 1200px;">
+  <div class="tile-card">
+    <div class="w-100">
+
+      <div class="page-titlebar d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <div>
+          <h3 class="m-0">تصحيح المحاسبة القديمة — {{ kind }}</h3>
+          <span class="text-muted">{{ day_date }}</span>
+        </div>
+
+        <div class="d-flex gap-2 flex-wrap mobile-stack">
+          <a class="btn btn-secondary btn-sm" href="{{ url_for('accounting_daily', kind=kind, date=day_date) }}">↩ رجوع</a>
+          <a class="btn btn-success btn-sm"
+             href="{{ url_for('accounting_movements', kind=kind, **{'from': day_date, 'to': day_date}) }}">
+            🔍 استعلام
+          </a>
+        </div>
+      </div>
+
+      <form method="post" action="{{ url_for('accounting_daily_legacy_edit',kind=kind,date=day_date) }}">
+        <input type="hidden" name="day_date" value="{{ day_date }}">
+        <div class="alert alert-warning mt-3">
+          <strong>تعديل الإدارة للسجل القديم:</strong> احتفظنا بطريقة حساب المبالغ القديمة، بما فيها إشارات السداد.
+          عند الحفظ تُحفظ نسخة من البيانات السابقة في سجل المراجعة، وتُلغى حالة الاعتماد السابقة لحين اعتمادها مجددًا.
+        </div>
+
+        <div class="row g-3 align-items-end">
+          <div class="col-12 col-md-3">
+            <label class="form-label">التاريخ</label>
+            <div class="input-group">
+              <input type="date" class="form-control" value="{{ day_date }}" disabled>
+            </div>
+          </div>
+        </div>
+
+        <fieldset>
+        <div class="row g-3 align-items-end mt-1">
+          <div class="col-6 col-md-3">
+            <label class="form-label">صندوق بداية اليوم</label>
+            <input type="number" step="0.01" class="form-control cash-start" name="cash_start"
+                   value="{{ header.cash_start if header else '' }}" placeholder="0">
+          </div>
+
+          <div class="col-6 col-md-3">
+            <label class="form-label">صندوق نهاية اليوم</label>
+            <input type="number" step="0.01" class="form-control cash-end" name="cash_end"
+                   value="{{ header.cash_end if header else '' }}" placeholder="0">
+          </div>
+
+          <div class="col-6 col-md-3">
+            <label class="form-label">الكاش المستلم</label>
+            <input type="number" step="0.01" class="form-control cash-received" name="cash_received"
+                   value="{{ header.cash_received if header else '' }}" placeholder="0">
+          </div>
+
+          <div class="col-6 col-md-3">
+            <label class="form-label">مدفوعات الشبكة mada</label>
+            <input type="number" step="0.01" class="form-control mada" name="mada"
+                   value="{{ header.mada if header else '' }}" placeholder="0">
+          </div>
+
+          <div class="col-6 col-md-3">
+            <label class="form-label">الحوالات البنكية</label>
+            <input type="number" step="0.01" class="form-control bank-transfers" name="bank_transfers"
+                   value="{{ header.bank_transfers if header else '' }}" placeholder="0">
+          </div>
+
+          <div class="col-6 col-md-3">
+            <label class="form-label">الإجمالي الكلي في إنجاز</label>
+            <input type="number" step="0.01" class="form-control total-in-enjaz" name="total_in_enjaz"
+                   value="{{ header.total_in_enjaz if header else '' }}" placeholder="0">
+          </div>
+        </div>
+
+        <div class="row g-3 mt-2">
+
+          <div class="col-12 col-lg-4 daily-table-card">
+            <h5 class="mt-3 daily-table-title">المشتريات النقدية</h5>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered align-middle text-center">
+                <thead>
+                  <tr>
+                    <th>النوع</th>
+                    <th style="width:130px;">المبلغ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for i in range([20, inputs|length]|max) %}
+                  <tr>
+                    <td>
+                      <input class="form-control form-control-sm" name="input_type"
+                             value="{{ inputs[i].input_type if i < inputs|length else '' }}">
+                    </td>
+                    <td>
+                      <input type="number" step="0.01" class="form-control form-control-sm input-amount"
+                             name="input_amount" value="{{ inputs[i].amount if i < inputs|length else '' }}">
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="col-12 col-lg-4 daily-table-card">
+            <h5 class="mt-3 daily-table-title">
+المدفوعات الآجلة وسدادها / تمارا / إمكان
+</h5>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered align-middle text-center">
+                <thead>
+                  <tr>
+                    <th style="width:100px;">الحالة</th>
+                    <th style="width:130px;">المبلغ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for i in range([20, gen|length]|max) %}
+                  <tr>
+
+                    <td>
+                      <select class="form-select form-select-sm gen-kind" name="gen_kind">
+                        <option value="debt"
+                          {% if i < gen|length and gen[i].payment_kind == 'debt' %}selected{% endif %}>
+                          دين
+                        </option>
+
+                        <option value="payment"
+                          {% if i < gen|length and gen[i].payment_kind == 'payment' %}selected{% endif %}>
+                          سداد
+                        </option>
+
+                        <option value="tamara"
+                          {% if i < gen|length and gen[i].payment_kind == 'tamara' %}selected{% endif %}>
+                          تمارا
+                        </option>
+
+                        <option value="emkan"
+                          {% if i < gen|length and gen[i].payment_kind == 'emkan' %}selected{% endif %}>
+                          إمكان
+                        </option>
+                      </select>
+                    </td>
+<input
+  type="hidden"
+  name="gen_type"
+  value="{{ gen[i].expense_type if i < gen|length else '' }}"
+>
+                    <td>
+                      <input type="number" step="0.01" class="form-control form-control-sm gen-amount"
+                             name="gen_amount"
+                             value="{{ (gen[i].amount|abs) if i < gen|length else '' }}">
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="col-12 col-lg-4 daily-table-card">
+            <h5 class="mt-3 daily-table-title">مصروفات نثرية</h5>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered align-middle text-center">
+                <thead>
+                  <tr>
+                    <th>النوع</th>
+                    <th style="width:130px;">المبلغ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for i in range([20, petty|length]|max) %}
+                  <tr>
+                    <td>
+                      <input class="form-control form-control-sm" name="petty_type"
+                             value="{{ petty[i].expense_type if i < petty|length else '' }}">
+                    </td>
+                    <td>
+                      <input type="number" step="0.01" class="form-control form-control-sm petty-amount"
+                             name="petty_amount" value="{{ petty[i].amount if i < petty|length else '' }}">
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="row g-3 mt-3">
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">إجمالي صندوق بداية اليوم</div>
+            <div class="fs-5 fw-bold" id="total-cash-start">{{ '%.2f'|format(totals.cash_start) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">إجمالي صندوق نهاية اليوم</div>
+            <div class="fs-5 fw-bold" id="total-cash-end">{{ '%.2f'|format(totals.cash_end) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">إجمالي فرق الصندوق</div>
+            <div class="fs-5 fw-bold" id="total-cash-diff">{{ '%.2f'|format(totals.cash_diff) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">إجمالي الكاش المستلم</div>
+            <div class="fs-5 fw-bold" id="total-cash-received">{{ '%.2f'|format(totals.cash_received) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">إجمالي مدفوعات تمارا وإمكان</div>
+            <div class="fs-5 fw-bold" id="total-tamara">{{ '%.2f'|format(totals.tamara) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">إجمالي مدفوعات الشبكة mada</div>
+            <div class="fs-5 fw-bold" id="total-mada">{{ '%.2f'|format(totals.mada) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">إجمالي الحوالات البنكية</div>
+            <div class="fs-5 fw-bold" id="total-bank-transfers">{{ '%.2f'|format(totals.bank_transfers) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">إجمالي المشتريات النقدية</div>
+            <div class="fs-5 fw-bold" id="total-inputs">{{ '%.2f'|format(totals.inputs) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">إجمالي المدفوعات الآجلة وسدادها</div>
+            <div class="fs-5 fw-bold" id="total-general">{{ '%.2f'|format(totals.general) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">إجمالي المصروفات النثرية</div>
+            <div class="fs-5 fw-bold" id="total-petty">{{ '%.2f'|format(totals.petty) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">الإجمالي الكلي</div>
+            <div class="fs-5 fw-bold" id="total-overall">{{ '%.2f'|format(totals.total_overall) }}</div>
+          </div></div>
+
+          <div class="col-12 col-md-3"><div class="totals-card p-3">
+            <div class="small text-muted">الخطأ</div>
+            <div class="fs-5 fw-bold text-danger" id="total-error">{{ '%.2f'|format(totals.error) }}</div>
+          </div></div>
+
+        </div>
+        </fieldset>
+
+        <fieldset>
+        <div class="mt-3">
+          <label class="form-label">ملاحظات (اختياري)</label>
+          <textarea class="form-control" name="notes" rows="2"
+                    placeholder="ملاحظات اليوم...">{{ header.notes if header and header.notes else '' }}</textarea>
+        </div>
+
+        <div class="form-check mt-3">
+          <input class="form-check-input" type="checkbox" name="confirm_legacy_edit" value="yes" id="confirmLegacy" required>
+          <label class="form-check-label" for="confirmLegacy">أؤكد تعديل هذا السجل مع حفظ نسخة من قيمه السابقة وإعادة طلب الاعتماد المالي.</label>
+        </div>
+        <div class="row g-2 mt-3">
+          <div class="col-12 col-md-3 ms-md-auto">
+            <button type="submit" class="btn btn-primary w-100" name="action" value="save">
+              حفظ
+            </button>
+          </div>
+        </div>
+        </fieldset>
+
+      </form>
+
+    </div>
+  </div>
+</div>
+
+<script>
+function toFloat(v){
+  const s = (v ?? "").toString().trim();
+  if(!s) return 0;
+  const n = parseFloat(s.replace(/,/g,''));
+  return isNaN(n) ? 0 : n;
+}
+
+function sumBy(sel){
+  let t = 0;
+  document.querySelectorAll(sel).forEach(el => {
+    t += toFloat(el.value);
+  });
+  return t;
+}
+
+function splitGeneralAndTamara(){
+  let general = 0;
+  let tamara = 0;
+
+  document.querySelectorAll('.gen-amount').forEach((el) => {
+    const tr = el.closest('tr');
+    const kind = tr?.querySelector('.gen-kind')?.value || 'debt';
+    const amount = Math.abs(toFloat(el.value));
+
+    if(kind === 'payment'){
+      general -= amount;
+    }else if(kind === 'debt'){
+      general += amount;
+    }else if(kind === 'tamara' || kind === 'emkan'){
+      tamara += amount;
+    }
+  });
+
+  return { general, tamara };
+}
+
+function setText(id, val){
+  const el = document.getElementById(id);
+  if(el) el.textContent = Number(val).toFixed(2);
+}
+
+function setErrorStyle(val){
+  const el = document.getElementById('total-error');
+  if(!el) return;
+  el.classList.remove('text-success','text-danger');
+  el.classList.add(Math.abs(val) < 0.005 ? 'text-success' : 'text-danger');
+}
+
+function recalcTotals(){
+  const inputs = sumBy('.input-amount');
+  const split = splitGeneralAndTamara();
+  const general = split.general;
+  const tamara = split.tamara;
+  const petty = sumBy('.petty-amount');
+
+  const cashStart = toFloat(document.querySelector('.cash-start')?.value);
+  const cashEnd = toFloat(document.querySelector('.cash-end')?.value);
+  const cashReceived = toFloat(document.querySelector('.cash-received')?.value);
+  const mada = toFloat(document.querySelector('.mada')?.value);
+  const bankTransfers = toFloat(document.querySelector('.bank-transfers')?.value);
+  const inEnjaz = toFloat(document.querySelector('.total-in-enjaz')?.value);
+
+  // فرق الصندوق = صندوق النهاية - صندوق البداية + الكاش المستلم
+  const cashDiff = cashEnd - cashStart + cashReceived;
+
+  const totalOverall =
+    (
+      cashEnd
+      + cashReceived
+      + tamara
+      + mada
+      + bankTransfers
+      + inputs
+      + general
+      + petty
+    ) - cashStart;
+
+  const error = totalOverall - inEnjaz;
+
+  setText('total-inputs', inputs);
+  setText('total-tamara', tamara);
+  setText('total-general', general);
+  setText('total-petty', petty);
+
+  setText('total-cash-start', cashStart);
+  setText('total-cash-end', cashEnd);
+  setText('total-cash-diff', cashDiff);
+  setText('total-cash-received', cashReceived);
+  setText('total-mada', mada);
+  setText('total-bank-transfers', bankTransfers);
+
+  setText('total-overall', totalOverall);
+  setText('total-error', error);
+
+  setErrorStyle(error);
+}
+
+document.addEventListener('input', (e) => {
+  if (e.target.matches(
+    '.input-amount,' +
+    '.gen-amount,' +
+    '.petty-amount,' +
+    '.cash-start,' +
+    '.cash-end,' +
+    '.cash-received,' +
+    '.mada,' +
+    '.bank-transfers,' +
+    '.total-in-enjaz'
+  )) {
+    recalcTotals();
+  }
+});
+
+document.addEventListener('change', (e) => {
+  if (e.target.matches('.gen-kind')) {
+    recalcTotals();
+  }
+});
+
+window.addEventListener('load', recalcTotals);
+</script>
+
+{% endblock %}
