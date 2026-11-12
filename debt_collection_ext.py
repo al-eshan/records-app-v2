@@ -5,6 +5,7 @@ The main WhatsApp inbox remains responsible for provider-approved sending.
 from datetime import datetime, timezone
 from flask import request, session, redirect, url_for, render_template, flash
 import json
+from urllib.parse import quote
 from debt_customers_ext import ensure_customer_schema, normalized_phone
 
 
@@ -76,6 +77,17 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
             wa_number_id INTEGER NOT NULL, conversation_id INTEGER NOT NULL,
             opened_by TEXT NOT NULL,
             opened_at TEXT NOT NULL DEFAULT (datetime('now')))''')
+        db.execute('''CREATE TABLE IF NOT EXISTS debt_manual_whatsapp_open (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            debt_id INTEGER NOT NULL,
+            customer_id INTEGER NOT NULL,
+            wa_number_id INTEGER NOT NULL,
+            destination TEXT NOT NULL,
+            message_snapshot TEXT NOT NULL,
+            opened_by TEXT NOT NULL,
+            opened_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )''')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_debt_manual_open_customer ON debt_manual_whatsapp_open(customer_id)')
         db.execute('CREATE INDEX IF NOT EXISTS idx_debt_followups_debt ON debt_followups(debt_id)')
         db.commit()
 
@@ -170,7 +182,7 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
             flash('رقم العميل غير صالح أو مطابق لرقم المؤسسة.', 'danger')
             return redirect(error_target)
         conversation = db.execute('''SELECT id FROM wa_conversations
-           WHERE wa_number_id=? AND contact_wa_id=? ORDER BY id DESC LIMIT 1''',(nid,phone)).fetchone()
+           WHERE wa_number_id=? AND contact_wa_id=? AND is_deleted=0 ORDER BY id DESC LIMIT 1''',(nid,phone)).fetchone()
         with db:
             if conversation:
                 cid=conversation['id']
@@ -190,6 +202,9 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
         return redirect(url_for('whatsapp_branches',conversation=cid,number=nid))
     @app.route('/accounting/debts/<es>/whatsapp-direct/<int:debt_id>')
     def debt_whatsapp_direct(es, debt_id):
+        '''Open WhatsApp Web / Business for manual sending, not via the API.
+        This does not prove delivery or control the logged-in sender account.
+        '''
         if not session.get('logged_in'):
             return redirect(url_for('login'))
         es = (es or '').strip().upper()
@@ -198,10 +213,39 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
         row = get_case(db, es, debt_id)
         if row is None:
             return render_template('no_permission.html'), 403
-        return _open_approved_whatsapp_chat(
-            db, es, row, debt_id,
-            url_for('accounting_debts_branch', es=es)
-        )
+
+        policy = db.execute('SELECT * FROM debt_customer_policy WHERE customer_id=?',
+                            (row['customer_id'],)).fetchone()
+        decision = debt_message_decision(row, policy)
+        if not decision['can_send']:
+            flash(decision['label'] + ' — لا يمكن فتح رسالة تحصيل لهذا العميل.', 'warning')
+            return redirect(url_for('accounting_debts_branch', es=es))
+
+        sender = db.execute('''SELECT n.id, n.phone_number, n.label FROM debt_collection_settings s
+            JOIN wa_numbers n ON n.id=s.wa_number_id
+            WHERE s.id=1 AND n.is_active=1''').fetchone()
+        if sender is None:
+            flash('اختر رقم واتساب التحصيل من إعدادات الإدارة.', 'danger')
+            return redirect(url_for('accounting_debts_branch', es=es))
+        if int(sender['id']) not in wa_allowed_ids(db, require_reply=True):
+            flash('ليس لديك صلاحية استخدام رقم واتساب التحصيل.', 'danger')
+            return redirect(url_for('accounting_debts_branch', es=es))
+
+        canonical = db.execute('SELECT mobile FROM debt_customers WHERE id=?',
+                               (row['customer_id'],)).fetchone()
+        phone = normalize_phone(canonical['mobile']) if canonical else ''
+        if not phone or phone == normalize_phone(sender['phone_number']):
+            flash('رقم العميل غير صالح أو مطابق لرقم المؤسسة.', 'danger')
+            return redirect(url_for('accounting_debts_branch', es=es))
+
+        message = prepared_for_customer(db, row)
+        with db:
+            db.execute('''INSERT INTO debt_manual_whatsapp_open
+              (debt_id, customer_id, wa_number_id, destination, message_snapshot, opened_by)
+              VALUES (?,?,?,?,?,?)''',
+              (debt_id, row['customer_id'], int(sender['id']), phone,
+               message, session.get('username') or ''))
+        return redirect('https://wa.me/' + phone + '?text=' + quote(message, safe=''), code=302)
 
     @app.route('/accounting/debts/<es>/case/<int:debt_id>', methods=['GET', 'POST'])
     def debt_collection_case(es, debt_id):
