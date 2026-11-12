@@ -205,6 +205,15 @@
                 <div class="d-flex flex-wrap gap-1 justify-content-center align-items-center mb-2">
                   {% if decision and decision.can_send %}
                     <a href="{{url_for('debt_whatsapp_direct',es=selected.es,debt_id=selected.id)}}" class="btn btn-success btn-sm" target="_blank" rel="noopener noreferrer" title="يفتح WhatsApp Business / Web مع النص جاهزًا للإرسال اليدوي؛ اختر حساب واتساب الصحيح">💬 إرسال رسالة</a>
+                    {% if debt_pending_by_customer.get(group.customer_id,0) %}
+                    <form method="post" action="{{url_for('debt_confirm_manual_send',es=selected.es,debt_id=selected.id)}}" class="d-inline"
+                          onsubmit="return confirm('هل أرسلت الرسالة بالفعل من واتساب ويب؟ هذا تأكيد يدوي لا يثبت وصولها.');">
+                      <input type="hidden" name="confirm_token" value="{{ debt_confirm_token }}">
+                      <input type="hidden" name="action" value="confirm">
+                      <button class="btn btn-sm btn-outline-success" type="submit">✅ تأكيد الإرسال</button>
+                    </form>
+                    <span class="badge bg-warning text-dark">{{debt_pending_by_customer[group.customer_id]}} بانتظار التأكيد</span>
+                    {% endif %}
                   {% elif decision %}
                     {% if session.get('username') == 'adm-es' %}
                       <a href="{{url_for('debt_collection_case',es=selected.es,debt_id=selected.id)}}" class="btn btn-sm btn-outline-{{decision.tone}}">{{decision.label}}</a>
@@ -213,6 +222,9 @@
                     {% endif %}
                   {% endif %}
                   <a href="{{url_for('debt_collection_case',es=selected.es,debt_id=selected.id)}}" class="btn btn-sm btn-outline-info">المراسلات والمتابعة</a>
+                  {% if debt_last_confirmed_by_customer.get(group.customer_id) %}
+                  <span class="small text-success">آخر إرسال أكدّه الموظف: {{debt_last_confirmed_by_customer[group.customer_id]}}</span>
+                  {% endif %}
                 </div>
                 {% if group.customer_id %}
                   <a class="btn btn-sm btn-outline-primary" href="{{url_for('debt_customer_profile', customer_id=group.customer_id)}}" title="صفحة مستقلة بجميع فواتير العميل">
