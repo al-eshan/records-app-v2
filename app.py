@@ -739,6 +739,14 @@ def ensure_whatsapp_schema(db):
     conv_cols = [r[1] for r in db.execute("PRAGMA table_info(wa_conversations)").fetchall()]
     if "last_inbound_at" not in conv_cols:
         db.execute("ALTER TABLE wa_conversations ADD COLUMN last_inbound_at TEXT")
+    # Administrative delete is reversible and preserves audit evidence.
+    for col, data_type in (
+        ("is_deleted", "INTEGER NOT NULL DEFAULT 0"),
+        ("deleted_at", "TEXT"),
+        ("deleted_by", "TEXT"),
+    ):
+        if col not in conv_cols:
+            db.execute(f"ALTER TABLE wa_conversations ADD COLUMN {col} {data_type}")
 
     message_cols = [r[1] for r in db.execute("PRAGMA table_info(wa_messages)").fetchall()]
     migrations = {
@@ -841,7 +849,7 @@ def _wa_total_unread_for_session():
             return 0
         placeholders = ",".join(["?"] * len(ids))
         row = db.execute(
-            f"SELECT COALESCE(SUM(unread_count),0) AS c FROM wa_conversations WHERE wa_number_id IN ({placeholders})",
+            f"SELECT COALESCE(SUM(unread_count),0) AS c FROM wa_conversations WHERE wa_number_id IN ({placeholders}) AND is_deleted=0",
             ids,
         ).fetchone()
         return int(row["c"] or 0)
@@ -1413,6 +1421,8 @@ def _gupshup_post_template(branch_code, source_number, destination, template_id,
             msg = data.get("message") or data.get("error") or raw
         except Exception:
             msg = raw
+        if exc.code == 401:
+            return None, "Gupshup HTTP 401: مفتاح API غير صالح لهذا التطبيق أو رقم الإرسال؛ راجع مفتاح Render ومصدر الرقم في Gupshup."
         return None, f"Gupshup HTTP {exc.code}: {msg}"
     except Exception as exc:
         return None, f"تعذر الاتصال بـ Gupshup: {exc}"
@@ -1870,7 +1880,7 @@ def whatsapp_webhook():
                             UPDATE wa_conversations
                                SET contact_name=?, last_message=?, last_message_at=?,
                                    last_inbound_at=?, unread_count=COALESCE(unread_count,0)+1,
-                                   updated_at=?
+                                   updated_at=?, is_deleted=0, deleted_at=NULL, deleted_by=NULL
                              WHERE id=?
                             """,
                             (contact_name, body, sent_at, sent_at, now_iso, conversation_id),
@@ -1993,7 +2003,8 @@ def gupshup_webhook():
                                 """
                                 UPDATE wa_conversations
                                    SET contact_name=?, last_message=?, last_message_at=?, last_inbound_at=?,
-                                       unread_count=COALESCE(unread_count,0)+1, updated_at=?
+                                       unread_count=COALESCE(unread_count,0)+1, updated_at=?,
+                                   is_deleted=0, deleted_at=NULL, deleted_by=NULL
                                  WHERE id=?
                                 """,
                                 (contact_name, body, sent_at, sent_at, now_iso, conversation_id),
@@ -2113,6 +2124,10 @@ def whatsapp_branches():
     selected_number = (request.args.get("number") or "all").strip()
     search_text = (request.args.get("q") or "").strip()
     conversation_id = (request.args.get("conversation") or "").strip()
+    show_deleted = bool(is_master and request.args.get("trash") == "1")
+    # Token to prevent cross-site destructive form requests.
+    if is_master and not session.get("_wa_delete_token"):
+        session["_wa_delete_token"] = uuid.uuid4().hex
 
     if not allowed_ids:
         numbers = []
@@ -2129,8 +2144,8 @@ def whatsapp_branches():
             allowed_ids,
         ).fetchall()
 
-        where = [f"c.wa_number_id IN ({placeholders})"]
-        params = list(allowed_ids)
+        where = [f"c.wa_number_id IN ({placeholders})", "c.is_deleted=?"]
+        params = list(allowed_ids) + [1 if show_deleted else 0]
         if selected_number != "all":
             try:
                 selected_id = int(selected_number)
@@ -2180,9 +2195,9 @@ def whatsapp_branches():
                            n.meta_phone_number_id, n.phone_number AS business_phone
                     FROM wa_conversations c
                     JOIN wa_numbers n ON n.id=c.wa_number_id
-                    WHERE c.id=? AND c.wa_number_id IN ({placeholders})
+                    WHERE c.id=? AND c.wa_number_id IN ({placeholders}) AND c.is_deleted=0 AND c.is_deleted=0 AND c.is_deleted=?
                     """,
-                    [cid] + list(allowed_ids),
+                    [cid] + list(allowed_ids) + [1 if show_deleted else 0],
                 ).fetchone()
             if active_conversation:
                 messages = db.execute(
@@ -2198,10 +2213,11 @@ def whatsapp_branches():
                     (cid,),
                 ).fetchall()
                 latest_message_id = int(messages[-1]["id"]) if messages else 0
-                can_reply_active = int(active_conversation["wa_number_id"]) in reply_ids
+                can_reply_active = (not show_deleted and int(active_conversation["wa_number_id"]) in reply_ids)
                 freeform_open, freeform_expires_at = _wa_freeform_open(active_conversation["last_inbound_at"])
-                if can_reply_active and not freeform_open:
-                    approved_templates, template_load_error = _gupshup_get_approved_text_templates(active_conversation["branch_code"] or "")
+                # No automatic template fetch: ordinary replies are shown only inside
+                # the official 24h service window. Template diagnostics remain available
+                # separately for administrators from the existing settings page.
 
                 latest_incoming = db.execute(
                     """
@@ -2220,7 +2236,7 @@ def whatsapp_branches():
 
     draft_payload = session.get('_debt_wa_draft') or {}
     debt_draft_text = ''
-    if active_conversation and draft_payload.get('conversation_id') == active_conversation['id']:
+    if active_conversation and not show_deleted and draft_payload.get('conversation_id') == active_conversation['id']:
         debt_draft_text = str(draft_payload.get('text') or '')
         session.pop('_debt_wa_draft',None)
 
@@ -2247,6 +2263,9 @@ def whatsapp_branches():
         approved_templates=approved_templates,
         template_load_error=template_load_error,
         debt_draft_text=debt_draft_text,
+        is_master=is_master,
+        show_deleted=show_deleted,
+        wa_delete_token=session.get("_wa_delete_token") if is_master else "",
     )
     # Keep all other WhatsApp functionality unchanged.  An active 24-hour
     # window receives the debt message in the normal composer.  Otherwise,
@@ -2300,6 +2319,55 @@ def whatsapp_branches():
     return html
 
 
+
+@app.route("/whatsapp/conversation/<int:conversation_id>/delete", methods=["POST"])
+@login_required
+def whatsapp_admin_delete_conversation(conversation_id):
+    """Move the conversation out of the inbox, preserving WhatsApp history."""
+    if session.get("username") != MASTER_USERNAME:
+        return render_template("no_permission.html"), 403
+    expected = session.get("_wa_delete_token") or ""
+    provided = request.form.get("csrf_token") or ""
+    if not expected or not hmac.compare_digest(expected, provided):
+        return "طلب غير صالح. حدّث الصفحة ثم حاول مجددًا.", 400
+    db = get_db()
+    ensure_whatsapp_schema(db)
+    row = db.execute("SELECT id FROM wa_conversations WHERE id=? AND is_deleted=0", (conversation_id,)).fetchone()
+    if not row:
+        flash("المحادثة غير موجودة أو محذوفة سابقًا.", "warning")
+        return redirect(url_for("whatsapp_branches"))
+    db.execute("""
+        UPDATE wa_conversations SET is_deleted=1,deleted_at=datetime('now'),
+           deleted_by=?,unread_count=0 WHERE id=?
+    """, (session.get("username") or MASTER_USERNAME, conversation_id))
+    db.commit()
+    flash("حُذفت المحادثة من القائمة ونُقلت للمحذوفات. يمكن للإدارة استعادتها، ولم تُحذف الرسائل من السجل.", "success")
+    return redirect(url_for("whatsapp_branches"))
+
+
+@app.route("/whatsapp/conversation/<int:conversation_id>/restore", methods=["POST"])
+@login_required
+def whatsapp_admin_restore_conversation(conversation_id):
+    if session.get("username") != MASTER_USERNAME:
+        return render_template("no_permission.html"), 403
+    expected = session.get("_wa_delete_token") or ""
+    provided = request.form.get("csrf_token") or ""
+    if not expected or not hmac.compare_digest(expected, provided):
+        return "طلب غير صالح. حدّث الصفحة ثم حاول مجددًا.", 400
+    db = get_db()
+    ensure_whatsapp_schema(db)
+    changed = db.execute("""
+        UPDATE wa_conversations SET is_deleted=0,deleted_at=NULL,deleted_by=NULL,
+            updated_at=datetime('now') WHERE id=? AND is_deleted=1
+    """, (conversation_id,)).rowcount
+    db.commit()
+    flash("تمت استعادة المحادثة إلى لوحة واتساب." if changed else "المحادثة غير موجودة في المحذوفات.",
+          "success" if changed else "warning")
+    if changed:
+        return redirect(url_for("whatsapp_branches", conversation=conversation_id))
+    return redirect(url_for("whatsapp_branches", trash=1))
+
+
 @app.route("/whatsapp/new", methods=["POST"])
 @login_required
 def whatsapp_new_conversation():
@@ -2331,7 +2399,7 @@ def whatsapp_new_conversation():
         return redirect(url_for("whatsapp_branches"))
 
     row = db.execute(
-        "SELECT id, contact_name FROM wa_conversations WHERE wa_number_id=? AND contact_wa_id=? LIMIT 1",
+        "SELECT id, contact_name FROM wa_conversations WHERE wa_number_id=? AND contact_wa_id=? AND is_deleted=0 ORDER BY id DESC LIMIT 1",
         (wa_number_id, phone),
     ).fetchone()
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -2368,7 +2436,7 @@ def whatsapp_send_template(conversation_id):
         f"""
         SELECT c.*, n.label AS number_label, n.branch_code, n.phone_number
         FROM wa_conversations c JOIN wa_numbers n ON n.id=c.wa_number_id
-        WHERE c.id=? AND c.wa_number_id IN ({placeholders})
+        WHERE c.id=? AND c.wa_number_id IN ({placeholders}) AND c.is_deleted=0
         """,
         [conversation_id] + list(reply_ids),
     ).fetchone()
@@ -2437,7 +2505,7 @@ def whatsapp_send_message(conversation_id):
                n.meta_phone_number_id
         FROM wa_conversations c
         JOIN wa_numbers n ON n.id=c.wa_number_id
-        WHERE c.id=? AND c.wa_number_id IN ({placeholders})
+        WHERE c.id=? AND c.wa_number_id IN ({placeholders}) AND c.is_deleted=0
         """,
         [conversation_id] + list(reply_ids),
     ).fetchone()
@@ -2685,7 +2753,7 @@ def whatsapp_api_state():
         return {"total_unread": 0, "latest_message_id": 0}
     placeholders = ",".join(["?"] * len(allowed_ids))
     unread = db.execute(
-        f"SELECT COALESCE(SUM(unread_count),0) AS c FROM wa_conversations WHERE wa_number_id IN ({placeholders})",
+        f"SELECT COALESCE(SUM(unread_count),0) AS c FROM wa_conversations WHERE wa_number_id IN ({placeholders}) AND is_deleted=0",
         allowed_ids,
     ).fetchone()["c"]
     latest_id = 0
@@ -2697,7 +2765,7 @@ def whatsapp_api_state():
                 f"""
                 SELECT COALESCE(MAX(m.id),0) AS mid
                 FROM wa_messages m JOIN wa_conversations c ON c.id=m.conversation_id
-                WHERE c.id=? AND c.wa_number_id IN ({placeholders})
+                WHERE c.id=? AND c.wa_number_id IN ({placeholders}) AND c.is_deleted=0
                 """,
                 [cid] + list(allowed_ids),
             ).fetchone()

@@ -204,7 +204,7 @@
               <td>
                 <div class="d-flex flex-wrap gap-1 justify-content-center align-items-center mb-2">
                   {% if decision and decision.can_send %}
-                    <a href="{{url_for('debt_whatsapp_direct',es=selected.es,debt_id=selected.id)}}" class="btn btn-success btn-sm" title="يفتح محادثة واتساب المشروع مباشرة برقم التحصيل الثابت">💬 إرسال رسالة</a>
+                    <a href="{{url_for('debt_whatsapp_direct',es=selected.es,debt_id=selected.id)}}" class="btn btn-success btn-sm" target="_blank" rel="noopener noreferrer" title="يفتح WhatsApp Business / Web مع النص جاهزًا للإرسال اليدوي؛ اختر حساب واتساب الصحيح">💬 إرسال رسالة</a>
                   {% elif decision %}
                     {% if session.get('username') == 'adm-es' %}
                       <a href="{{url_for('debt_collection_case',es=selected.es,debt_id=selected.id)}}" class="btn btn-sm btn-outline-{{decision.tone}}">{{decision.label}}</a>

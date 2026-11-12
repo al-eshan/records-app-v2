@@ -384,6 +384,9 @@
             <a class="btn btn-secondary btn-sm" href="{{ url_for('whatsapp_numbers_manage') }}">⚙️ إدارة الأرقام</a>
             {% if session.get('username') == 'adm-es' %}
             <a class="btn btn-outline-warning btn-sm" href="{{ url_for('whatsapp_connection_settings') }}">🔧 فحص الإرسال</a>
+            {% if is_master %}
+              <a class="btn btn-sm {{ 'btn-warning' if show_deleted else 'btn-outline-danger' }}" href="{{ url_for('whatsapp_branches', trash=0 if show_deleted else 1) }}">{{ '↩️ العودة للمحادثات' if show_deleted else '🗑️ المحذوفات' }}</a>
+            {% endif %}
             {% endif %}
           {% endif %}
         </div>
@@ -424,6 +427,7 @@
           <div class="wa-search">
             <form method="get" action="{{ url_for('whatsapp_branches') }}">
               <input type="hidden" name="number" value="{{ selected_number }}">
+              {% if show_deleted %}<input type="hidden" name="trash" value="1">{% endif %}
               <input class="form-control form-control-sm" type="search" name="q" value="{{ search_text }}" placeholder="بحث بالاسم أو الرقم أو الرسالة...">
               <button class="btn btn-primary btn-sm" type="submit">🔍 بحث</button>
             </form>
@@ -432,7 +436,7 @@
           {% if conversations %}
             {% for c in conversations %}
               <a class="wa-conversation {% if active_conversation and active_conversation['id'] == c['id'] %}active{% endif %}"
-                 href="{{ url_for('whatsapp_branches', number=selected_number, q=search_text, conversation=c['id']) }}">
+                 href="{{ url_for('whatsapp_branches', number=selected_number, q=search_text, conversation=c['id'], trash=1 if show_deleted else 0) }}">
                 <div class="wa-conv-head">
                   <div class="wa-name">{{ c['contact_name'] or c['contact_wa_id'] or 'عميل بدون اسم' }}</div>
                   <span class="wa-branch">{{ c['number_label'] }}</span>
@@ -462,7 +466,24 @@
                   <div class="small text-muted" dir="ltr">{{ active_conversation['contact_wa_id'] or '' }}</div>
                 </div>
               </div>
-              <span class="badge bg-secondary">{{ active_conversation['number_label'] }}</span>
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <span class="badge bg-secondary">{{ active_conversation['number_label'] }}</span>
+                {% if is_master %}
+                  {% if show_deleted %}
+                    <span class="badge bg-warning text-dark">محذوفة من القائمة</span>
+                    <form method="post" action="{{ url_for('whatsapp_admin_restore_conversation', conversation_id=active_conversation['id']) }}">
+                      <input type="hidden" name="csrf_token" value="{{ wa_delete_token }}">
+                      <button class="btn btn-sm btn-success" type="submit">↩️ استعادة المحادثة</button>
+                    </form>
+                  {% else %}
+                    <form method="post" action="{{ url_for('whatsapp_admin_delete_conversation', conversation_id=active_conversation['id']) }}"
+                          onsubmit="return confirm('حذف المحادثة من القائمة؟ ستبقى الرسائل محفوظة ويمكن للإدارة استعادتها.');">
+                      <input type="hidden" name="csrf_token" value="{{ wa_delete_token }}">
+                      <button class="btn btn-sm btn-outline-danger" type="submit">🗑️ حذف المحادثة</button>
+                    </form>
+                  {% endif %}
+                {% endif %}
+              </div>
             </div>
 
             <div class="wa-chat-body" id="waChatBody">
@@ -500,7 +521,9 @@
               {% endfor %}
             </div>
 
-            {% if can_reply_active and api_ready %}
+            {% if show_deleted %}
+              <div class="wa-closed">هذه المحادثة في المحذوفات. للإرسال إليها يرجى استعادتها أولًا.</div>
+            {% elif can_reply_active and api_ready %}
               {% if freeform_open %}
                 <div class="wa-composer">
                   <div class="wa-window-note">● نافذة خدمة العميل مفتوحة — يمكنك الرد الآن.</div>
@@ -513,34 +536,10 @@
                 </div>
               {% else %}
                 <div class="wa-composer">
-                  <div class="wa-window-note" style="color:#ffc107;">⏱️ لا توجد نافذة خدمة مفتوحة. ابدأ بقالب WhatsApp معتمد، وبعد رد العميل يمكنك الكتابة بحرية لمدة 24 ساعة.</div>
-                  {% if template_load_error %}
-                    <div class="alert alert-warning py-2 mb-2">
-                      {{ template_load_error }}
-                      {% if session.get('username') == 'adm-es' %}
-                        <a class="btn btn-sm btn-outline-warning mt-2" href="{{url_for('whatsapp_connection_settings', check=active_conversation['wa_number_id'])}}">فحص رقم واتساب وإعدادات Gupshup</a>
-                      {% endif %}
-                    </div>
-                  {% elif approved_templates %}
-                    <form method="post" action="{{ url_for('whatsapp_send_template', conversation_id=active_conversation['id']) }}" class="row g-2 align-items-end">
-                      <div class="col-md-5">
-                        <label class="form-label small">القالب المعتمد</label>
-                        <select class="form-select" name="template_id" id="waTemplateSelect" required>
-                          <option value="">اختر القالب...</option>
-                          {% for t in approved_templates %}
-                            <option value="{{ t['id'] }}" data-count="{{ t['param_count'] }}" data-body="{{ t['body']|e }}">{{ t['name'] }}{% if t['language'] %} — {{ t['language'] }}{% endif %}{% if t['category'] %} — {{ t['category'] }}{% endif %}</option>
-                          {% endfor %}
-                        </select>
-                      </div>
-                      <div class="col-md-5">
-                        <label class="form-label small">قيم المتغيرات</label>
-                        <input class="form-control" name="template_params" id="waTemplateParams" placeholder="مثال: عبدالرحمن | رقم الطلب 123">
-                        <div class="small text-muted mt-1" id="waTemplateHint">اتركها فارغة إذا القالب بدون متغيرات. افصل القيم بعلامة |</div>
-                      </div>
-                      <div class="col-md-2 d-grid"><button class="btn btn-primary" type="submit">إرسال القالب</button></div>
-                    </form>
-                  {% else %}
-                    <div class="alert alert-info py-2 mb-0">لا توجد قوالب نصية معتمدة لهذا الرقم حاليًا. يلزم اعتماد قالب صالح لدى Gupshup قبل مراسلة العميل خارج نافذة خدمة 24 ساعة. لا ترسل مطالبة تحصيل قبل التحقق من سماح سياسة واتساب بحالة الاستخدام.</div>
+                  <div class="wa-window-note" style="color:#ffc107;">⏱️ لا يمكن إرسال رسالة نصية عادية الآن. يجب أن يرسل العميل رسالة إلى هذا الرقم لفتح نافذة خدمة مدتها 24 ساعة، أو استخدام قالب رسمي معتمد عند الحاجة.</div>
+                  <p class="small text-muted mb-2">أوقِف طلب القوالب التلقائي مؤقتًا. بمجرد وصول رسالة من العميل سيظهر مربع الكتابة وزر «إرسال» تلقائيًا. لا يمكن تجاوز هذا الشرط من خلال البرنامج.</p>
+                  {% if is_master %}
+                    <a class="btn btn-outline-warning btn-sm" href="{{ url_for('whatsapp_connection_settings', check=active_conversation['wa_number_id']) }}">🔧 فحص ربط Gupshup عند تعذر الإرسال</a>
                   {% endif %}
                 </div>
               {% endif %}
