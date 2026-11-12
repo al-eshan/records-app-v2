@@ -101,9 +101,29 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
                 db.execute(f'ALTER TABLE debt_manual_whatsapp_open ADD COLUMN {column} {kind}')
         db.execute('CREATE INDEX IF NOT EXISTS idx_debt_manual_open_customer ON debt_manual_whatsapp_open(customer_id)')
         db.execute('CREATE INDEX IF NOT EXISTS idx_debt_manual_status ON debt_manual_whatsapp_open(customer_id,status,id)')
+        db.execute('''CREATE TABLE IF NOT EXISTS wa_manual_browser_outbox (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wa_number_id INTEGER NOT NULL,
+            conversation_id INTEGER NOT NULL,
+            destination TEXT NOT NULL,
+            contact_name TEXT,
+            message_snapshot TEXT,
+            opened_by TEXT NOT NULL,
+            opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+            status TEXT NOT NULL DEFAULT 'opened',
+            confirmed_at TEXT,
+            confirmed_by TEXT,
+            cancelled_at TEXT
+        )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS wa_manual_sync_links (
+            source_kind TEXT NOT NULL,
+            source_attempt_id INTEGER NOT NULL,
+            wa_message_id INTEGER NOT NULL,
+            PRIMARY KEY (source_kind,source_attempt_id)
+        )''')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_wa_manual_outbox_conv ON wa_manual_browser_outbox(conversation_id,status)')
         db.execute('CREATE INDEX IF NOT EXISTS idx_debt_followups_debt ON debt_followups(debt_id)')
         db.commit()
-
 
     def _confirm_token():
         if not session.get('_debt_send_confirm_token'):
@@ -191,38 +211,258 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
                                  (attempt['debt_id'],)).fetchone()
         if not opened_debt or opened_debt['customer_id'] != debt['customer_id'] or not authorized(opened_debt['es']):
             return render_template('no_permission.html'), 403
+
         now_utc = datetime.now(timezone.utc).isoformat(timespec='seconds')
         if action == 'confirm':
             with db:
-                changed = db.execute("""UPDATE debt_manual_whatsapp_open
-                    SET status='staff_confirmed',confirmed_sent_at=?,confirmed_by=?
-                    WHERE id=? AND status='opened'""",
-                    (now_utc, user, attempt['id'])).rowcount
+                changed = db.execute('''UPDATE debt_manual_whatsapp_open
+                  SET status='staff_confirmed', confirmed_sent_at=?, confirmed_by=?
+                  WHERE id=? AND status='opened' ''',
+                  (now_utc,user,attempt['id'])).rowcount
                 if changed:
                     try:
-                        branches = json.loads(attempt['included_branches'] or '[]')
-                    except (ValueError, TypeError):
-                        branches = []
-                    branches = [b for b in branches if b in ('ES1','ES2','ES3') and authorized(b)]
+                        branches=json.loads(attempt['included_branches'] or '[]')
+                    except (ValueError,TypeError):
+                        branches=[]
+                    # Old open attempts have no branch snapshot; update only their original debt.
+                    branches=[br for br in branches if br in ('ES1','ES2','ES3') and authorized(br)]
                     if not branches:
-                        branches = [opened_debt['es']]
-                    placeholders = ','.join('?' for _ in branches)
-                    db.execute(f"""UPDATE debts_ledger SET last_sent_at=?
-                        WHERE customer_id=? AND es IN ({placeholders})""",
-                        [now_utc, debt['customer_id'], *branches])
+                        branches=[opened_debt['es']]
+                    placeholders=','.join('?' for _ in branches)
+                    db.execute(f'''UPDATE debts_ledger SET last_sent_at=?
+                      WHERE customer_id=? AND es IN ({placeholders})''',
+                      [now_utc, debt['customer_id'], *branches])
+                    customer = db.execute('SELECT name FROM debt_customers WHERE id=?',
+                                          (debt['customer_id'],)).fetchone()
+                    _create_local_manual_message(
+                        db,'debt',attempt['id'],attempt['wa_number_id'],
+                        attempt['destination'],customer['name'] if customer else '',
+                        attempt['message_snapshot'],user,now_utc)
             if changed:
-                flash('تم توثيق الإرسال حسب تأكيد الموظف، وليس تأكيد وصول أو قراءة من واتساب.', 'success')
+                flash('تم توثيق إرسال الرسالة حسب تأكيد الموظف. لا يعني ذلك تأكيد وصولها أو قراءتها في واتساب.', 'success')
         else:
             with db:
-                changed = db.execute("""UPDATE debt_manual_whatsapp_open
-                    SET status='not_sent',cancelled_at=?,cancelled_by=?
-                    WHERE id=? AND status='opened'""",
-                    (now_utc,user,attempt['id'])).rowcount
+                changed=db.execute('''UPDATE debt_manual_whatsapp_open
+                  SET status='not_sent', cancelled_at=?, cancelled_by=?
+                  WHERE id=? AND status='opened' ''',
+                  (now_utc,user,attempt['id'])).rowcount
             if changed:
-                flash('تم تسجيل فتح المحادثة دون إرسال الرسالة.', 'info')
+                flash('تم تسجيل أن المحادثة فُتحت ولكن لم تُرسل منها رسالة.', 'info')
         if request.form.get('return_to') == 'case':
-            return redirect(url_for('debt_collection_case', es=es, debt_id=debt_id))
-        return redirect(url_for('accounting_debts_branch', es=es))
+            return redirect(url_for('debt_collection_case',es=es,debt_id=debt_id))
+        return redirect(url_for('accounting_debts_branch',es=es))
+
+    def _manual_source_token():
+        if not session.get('_wa_manual_token'):
+            session['_wa_manual_token'] = uuid.uuid4().hex
+        return session['_wa_manual_token']
+
+    def _manual_source_check():
+        token = session.get('_wa_manual_token') or ''
+        provided = request.form.get('manual_token') or ''
+        return bool(token and provided and hmac.compare_digest(token, provided))
+
+    def _create_local_manual_message(db, source_kind, source_attempt_id,
+                                     number_id, destination, customer_name,
+                                     body, sent_by, confirmed_at):
+        # Make a staff-confirmed *local log* visible in the unified inbox.
+
+        # This is intentionally not a provider acknowledgement or a message send.
+        # Never set meta_message_id, delivered/read, or last_inbound_at.
+        previous = db.execute('''SELECT wa_message_id FROM wa_manual_sync_links
+            WHERE source_kind=? AND source_attempt_id=?''',
+            (source_kind, source_attempt_id)).fetchone()
+        if previous:
+            return previous['wa_message_id']
+        number = db.execute('SELECT id, is_active FROM wa_numbers WHERE id=?',
+                            (number_id,)).fetchone()
+        if not number or not number['is_active']:
+            # Do not erase the attestation. The number may have been disabled.
+            return None
+        destination = normalize_phone(destination)
+        if not destination:
+            return None
+        conv = db.execute('''SELECT id FROM wa_conversations
+            WHERE wa_number_id=? AND contact_wa_id=? AND is_deleted=0
+            ORDER BY id DESC LIMIT 1''', (number_id,destination)).fetchone()
+        if conv:
+            conversation_id = conv['id']
+        else:
+            c = db.execute('''INSERT INTO wa_conversations
+                (wa_number_id,contact_wa_id,contact_name,last_message,last_message_at,
+                 last_inbound_at,unread_count,updated_at)
+                 VALUES (?,?,?,NULL,NULL,NULL,0,?)''',
+                 (number_id,destination,customer_name or destination,confirmed_at))
+            conversation_id = c.lastrowid
+        # If a genuine Coexistence echo has already arrived, use it rather
+        # than creating a second local copy. Later echoes may still be shown
+        # separately, and their actual provider status remains authoritative.
+        provider_row = None
+        if body:
+            # Do not match a message from weeks or months ago just because
+            # the text is identical. Only reuse a nearby provider echo.
+            matches = db.execute('''SELECT m.id,m.sent_at FROM wa_messages m
+                WHERE m.conversation_id=? AND m.direction='out'
+                  AND m.meta_message_id IS NOT NULL AND m.body=?
+                ORDER BY m.id DESC LIMIT 25''', (conversation_id,body)).fetchall()
+            try:
+                when = datetime.fromisoformat(str(confirmed_at).replace('Z','+00:00'))
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+            except (TypeError,ValueError):
+                when = None
+            for candidate in matches:
+                try:
+                    actual = datetime.fromisoformat(str(candidate['sent_at']).replace('Z','+00:00'))
+                    if actual.tzinfo is None:
+                        actual = actual.replace(tzinfo=timezone.utc)
+                    if when and abs((actual-when).total_seconds()) <= 7200:
+                        provider_row = candidate
+                        break
+                except (TypeError,ValueError):
+                    continue
+        if provider_row:
+            message_id = provider_row['id']
+        else:
+            display_body = body or 'رسالة من واتساب ويب: أكد الموظف إرسالها دون حفظ نصها.'
+            cur = db.execute('''INSERT INTO wa_messages
+                (conversation_id,meta_message_id,direction,message_type,body,sent_at,
+                 status,status_error,sent_by_user_id,sent_by_username,created_at)
+                VALUES (?,NULL,'out','manual_web',?,?,'staff_confirmed',
+                 'توثيق يدوي من الموظف؛ لم يؤكده واتساب ولا يثبت وصول الرسالة',NULL,?,?)''',
+                 (conversation_id,display_body,confirmed_at,sent_by,confirmed_at))
+            message_id = cur.lastrowid
+        db.execute('''INSERT OR IGNORE INTO wa_manual_sync_links
+            (source_kind,source_attempt_id,wa_message_id) VALUES (?,?,?)''',
+            (source_kind,source_attempt_id,message_id))
+        db.execute('''UPDATE wa_conversations
+            SET last_message=?,last_message_at=?,updated_at=?
+            WHERE id=? AND (last_message_at IS NULL OR last_message_at <= ?)''',
+            ((body or 'توثيق إرسال يدوي من واتساب ويب')[:300],confirmed_at,confirmed_at,
+             conversation_id,confirmed_at))
+        return message_id
+
+    def _backfill_confirmed_debt_messages(db):
+        rows = db.execute('''SELECT a.*,c.name AS customer_name
+            FROM debt_manual_whatsapp_open a
+            LEFT JOIN debt_customers c ON c.id=a.customer_id
+            WHERE a.status='staff_confirmed' AND NOT EXISTS (
+              SELECT 1 FROM wa_manual_sync_links l
+              WHERE l.source_kind='debt' AND l.source_attempt_id=a.id)
+            ORDER BY a.id DESC LIMIT 100''').fetchall()
+        if not rows:
+            return
+        with db:
+            for a in rows:
+                _create_local_manual_message(db,'debt',a['id'],a['wa_number_id'],
+                    a['destination'],a['customer_name'],a['message_snapshot'],
+                    a['confirmed_by'] or a['opened_by'],
+                    a['confirmed_sent_at'] or a['opened_at'])
+
+    @app.context_processor
+    def _wa_manual_context():
+        if not session.get('logged_in') or request.endpoint != 'whatsapp_branches':
+            return {}
+        db = get_db()
+        setup(db)
+        _backfill_confirmed_debt_messages(db)
+        rows = db.execute('''SELECT id,conversation_id,opened_by,message_snapshot
+            FROM wa_manual_browser_outbox WHERE status='opened'
+              AND opened_by=? ORDER BY id DESC''',
+              (session.get('username') or '',)).fetchall()
+        pending = {}
+        for r in rows:
+            pending.setdefault(int(r['conversation_id']),r)
+        return {'wa_manual_token':_manual_source_token(),
+                'wa_manual_pending': pending}
+
+    @app.route('/whatsapp/manual/open', methods=['POST'])
+    def wa_manual_open():
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        if not _manual_source_check():
+            return 'طلب غير صالح، حدّث الصفحة.', 400
+        db = get_db()
+        setup(db)
+        try:
+            number_id = int(request.form.get('wa_number_id') or '0')
+        except (ValueError,TypeError):
+            return 'رقم المؤسسة غير صالح', 400
+        if number_id not in wa_allowed_ids(db,require_reply=True):
+            return render_template('no_permission.html'), 403
+        number = db.execute('SELECT * FROM wa_numbers WHERE id=? AND is_active=1',
+                            (number_id,)).fetchone()
+        if not number:
+            return 'رقم المؤسسة غير متاح', 400
+        phone = normalize_phone(request.form.get('phone'))
+        if not phone or phone == normalize_phone(number['phone_number']):
+            return 'رقم جوال العميل غير صالح', 400
+        name = (request.form.get('contact_name') or '').strip()[:120]
+        body = (request.form.get('message') or '').strip()[:4000]
+        user = session.get('username') or ''
+        now = datetime.now(timezone.utc).isoformat(timespec='seconds')
+        with db:
+            conv = db.execute('''SELECT id FROM wa_conversations
+                WHERE wa_number_id=? AND contact_wa_id=? AND is_deleted=0
+                ORDER BY id DESC LIMIT 1''',(number_id,phone)).fetchone()
+            if conv:
+                conversation_id=conv['id']
+            else:
+                c=db.execute('''INSERT INTO wa_conversations
+                   (wa_number_id,contact_wa_id,contact_name,last_message,
+                    last_message_at,last_inbound_at,unread_count,updated_at)
+                   VALUES (?,?,?,'فتح واتساب ويب — بانتظار تأكيد الإرسال',
+                   NULL,NULL,0,?)''',(number_id,phone,name or phone,now))
+                conversation_id=c.lastrowid
+            db.execute('''INSERT INTO wa_manual_browser_outbox
+                (wa_number_id,conversation_id,destination,contact_name,
+                 message_snapshot,opened_by,opened_at)
+                VALUES (?,?,?,?,?,?,?)''',
+                (number_id,conversation_id,phone,name,body,user,now))
+        return redirect('https://wa.me/' + phone +
+                        ('?text=' + quote(body,safe='') if body else ''),code=302)
+
+    @app.route('/whatsapp/manual/confirm/<int:attempt_id>', methods=['POST'])
+    def wa_manual_confirm(attempt_id):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        if not _manual_source_check():
+            return 'طلب غير صالح، حدّث الصفحة.', 400
+        db=get_db()
+        setup(db)
+        attempt=db.execute('SELECT * FROM wa_manual_browser_outbox WHERE id=?',
+                           (attempt_id,)).fetchone()
+        if not attempt:
+            return 'سجل غير موجود', 404
+        if attempt['opened_by'] != (session.get('username') or '') and not admin():
+            return render_template('no_permission.html'), 403
+        if attempt['wa_number_id'] not in wa_allowed_ids(db,require_reply=True):
+            return render_template('no_permission.html'), 403
+        if attempt['status'] != 'opened':
+            return redirect(url_for('whatsapp_branches',conversation=attempt['conversation_id']))
+        action=(request.form.get('action') or 'confirm')
+        if action not in ('confirm','not_sent'):
+            return 'إجراء غير صالح',400
+        now = datetime.now(timezone.utc).isoformat(timespec='seconds')
+        with db:
+            if action=='confirm':
+                changed=db.execute('''UPDATE wa_manual_browser_outbox
+                    SET status='staff_confirmed',confirmed_by=?,confirmed_at=?
+                    WHERE id=? AND status='opened' ''',
+                    (session.get('username'),now,attempt_id)).rowcount
+                if changed:
+                    _create_local_manual_message(db,'new',attempt_id,
+                        attempt['wa_number_id'],attempt['destination'],
+                        attempt['contact_name'],attempt['message_snapshot'],
+                        session.get('username') or '',now)
+            else:
+                db.execute('''UPDATE wa_manual_browser_outbox
+                    SET status='not_sent',cancelled_at=?
+                    WHERE id=? AND status='opened' ''',(now,attempt_id))
+        flash('تم حفظ توثيق الموظف في لوحة واتساب، وليس إثباتًا لوصول الرسالة.'
+              if action=='confirm' else 'تم تسجيل أنها لم تُرسل.',
+              'success' if action=='confirm' else 'info')
+        return redirect(url_for('whatsapp_branches',conversation=attempt['conversation_id']))
 
     def get_case(db, es, debt_id):
         if es not in ('ES1', 'ES2', 'ES3') or not authorized(es):
@@ -381,7 +621,9 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
                opened_by, included_branches)
               VALUES (?,?,?,?,?,?,?)''',
               (debt_id, row['customer_id'], int(sender['id']), phone,
-               message, session.get('username') or '', json.dumps(accessible)))
+               message, session.get('username') or '',json.dumps(accessible)))
+        # WhatsApp Business App / Web link; user must review and tap Send.
+        # Cannot force a particular sender account via a wa.me link.
         return redirect('https://wa.me/' + phone + '?text=' + quote(message, safe=''), code=302)
 
     @app.route('/accounting/debts/<es>/case/<int:debt_id>', methods=['GET', 'POST'])

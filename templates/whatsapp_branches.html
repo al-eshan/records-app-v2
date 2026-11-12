@@ -504,10 +504,13 @@
                         {% endif %}
                       </div>
                     {% endif %}
+                    {% if m['message_type']=='manual_web' %}
+                    <div class="small" style="color:#ffd36c;font-weight:700;">📝 توثيق يدوي من الموظف — ليس تأكيد إرسال أو تسليم من واتساب</div>
+                    {% endif %}
                     {% if m['body'] %}<div>{{ m['body'] }}</div>{% endif %}
                     <div class="wa-msg-meta">
                       <span>{{ m['sent_at'] or '' }}</span>
-                      {% if m['direction']=='out' %}
+                      {% if m['direction']=='out' and m['message_type']!='manual_web' %}
                         {% set st = m['status'] or 'sent' %}
                         <span class="wa-status-icon {{ 'read' if st=='read' else ('failed' if st=='failed' else '') }}" title="{{ m['status_error'] or st }}">
                           {% if st=='read' %}✓✓{% elif st=='delivered' %}✓✓{% elif st=='failed' %}⚠{% else %}✓{% endif %}
@@ -521,6 +524,24 @@
               {% endfor %}
             </div>
 
+            {% if active_conversation and wa_manual_pending.get(active_conversation['id']) and not show_deleted %}
+              {% set pending_manual = wa_manual_pending[active_conversation['id']] %}
+              <div class="wa-composer" style="border:1px solid #eab308;padding:10px;margin:8px">
+                <div class="wa-window-note" style="color:#facc15">تم فتح واتساب ويب من هذه المحادثة، لكن لا يمكن للنظام معرفة هل ضغطت إرسال هناك.</div>
+                <div class="d-flex flex-wrap gap-2">
+                  <form method="post" action="{{url_for('wa_manual_confirm',attempt_id=pending_manual.id)}}"
+                        onsubmit="return confirm('هل أرسلت الرسالة بالفعل من واتساب ويب؟')">
+                    <input type="hidden" name="manual_token" value="{{wa_manual_token}}"><input type="hidden" name="action" value="confirm">
+                    <button type="submit" class="btn btn-success btn-sm">✅ تأكيد الإرسال اليدوي</button>
+                  </form>
+                  <form method="post" action="{{url_for('wa_manual_confirm',attempt_id=pending_manual.id)}}">
+                    <input type="hidden" name="manual_token" value="{{wa_manual_token}}"><input type="hidden" name="action" value="not_sent">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm">لم أرسل</button>
+                  </form>
+                </div>
+                <small class="text-muted">التوثيق يربط المحادثة بالرقم الذي اخترته داخل المشروع؛ تأكد أن حساب واتساب ويب المُستخدم هو نفسه.</small>
+              </div>
+            {% endif %}
             {% if show_deleted %}
               <div class="wa-closed">هذه المحادثة في المحذوفات. للإرسال إليها يرجى استعادتها أولًا.</div>
             {% elif can_reply_active and api_ready %}
@@ -538,6 +559,16 @@
                 <div class="wa-composer">
                   <div class="wa-window-note" style="color:#ffc107;">⏱️ لا يمكن إرسال رسالة نصية عادية الآن. يجب أن يرسل العميل رسالة إلى هذا الرقم لفتح نافذة خدمة مدتها 24 ساعة، أو استخدام قالب رسمي معتمد عند الحاجة.</div>
                   <p class="small text-muted mb-2">أوقِف طلب القوالب التلقائي مؤقتًا. بمجرد وصول رسالة من العميل سيظهر مربع الكتابة وزر «إرسال» تلقائيًا. لا يمكن تجاوز هذا الشرط من خلال البرنامج.</p>
+                  <form method="post" action="{{url_for('wa_manual_open')}}" target="_blank" class="mt-3">
+                    <input type="hidden" name="manual_token" value="{{wa_manual_token}}">
+                    <input type="hidden" name="wa_number_id" value="{{active_conversation['wa_number_id']}}">
+                    <input type="hidden" name="phone" value="{{active_conversation['contact_wa_id']}}">
+                    <input type="hidden" name="contact_name" value="{{active_conversation['contact_name'] or ''}}">
+                    <label class="form-label small">رسالة يدوية من واتساب ويب (اختياري)</label>
+                    <textarea class="form-control mb-2" name="message" rows="2" maxlength="4000" placeholder="اكتب رسالتك لتفتح جاهزة في واتساب ويب"></textarea>
+                    <button type="submit" class="btn btn-success btn-sm">💬 فتح واتساب ويب بدون قالب API</button>
+                    <small class="d-block text-muted mt-1">بعد الإرسال، ارجع لهذه الصفحة وحدّثها ثم أكّد الإرسال؛ التوثيق يدوي وليس وصولًا مؤكدًا.</small>
+                  </form>
                   {% if is_master %}
                     <a class="btn btn-outline-warning btn-sm" href="{{ url_for('whatsapp_connection_settings', check=active_conversation['wa_number_id']) }}">🔧 فحص ربط Gupshup عند تعذر الإرسال</a>
                   {% endif %}
@@ -546,7 +577,17 @@
             {% elif not can_reply_active %}
               <div class="wa-closed">👁️ لديك صلاحية عرض هذه المحادثة فقط، بدون رد.</div>
             {% else %}
-              <div class="wa-closed">⚙️ يلزم ضبط Gupshup API Key في Render قبل الإرسال.</div>
+              <div class="wa-composer">
+                <div class="wa-window-note">⚙️ لا يمكن الإرسال عبر API قبل ضبط Gupshup، لكن يمكنك فتح WhatsApp Web يدويًا.</div>
+                <form method="post" action="{{url_for('wa_manual_open')}}" target="_blank">
+                  <input type="hidden" name="manual_token" value="{{wa_manual_token}}">
+                  <input type="hidden" name="wa_number_id" value="{{active_conversation['wa_number_id']}}">
+                  <input type="hidden" name="phone" value="{{active_conversation['contact_wa_id']}}">
+                  <input type="hidden" name="contact_name" value="{{active_conversation['contact_name'] or ''}}">
+                  <textarea class="form-control mb-2" name="message" rows="2" maxlength="4000" placeholder="نص الرسالة لواتساب ويب"></textarea>
+                  <button type="submit" class="btn btn-success btn-sm">💬 فتح واتساب ويب للإرسال اليدوي</button>
+                </form>
+              </div>
             {% endif %}
           {% else %}
             <div class="wa-chat-placeholder">
@@ -569,6 +610,7 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
       <form method="post" action="{{ url_for('whatsapp_new_conversation') }}">
+        <input type="hidden" name="manual_token" value="{{wa_manual_token}}">
         <div class="modal-body">
           <div class="mb-3">
             <label class="form-label">الإرسال من</label>
@@ -588,11 +630,16 @@
             <label class="form-label">اسم العميل <span class="text-muted">(اختياري)</span></label>
             <input class="form-control" name="contact_name" placeholder="اسم العميل">
           </div>
-          <div class="small text-warning mt-3">إذا لم يرسل العميل لك خلال آخر 24 ساعة، يجب بدء المحادثة بقالب WhatsApp معتمد.</div>
+            <div class="mb-2">
+              <label class="form-label">نص الرسالة لفتحها في واتساب ويب <span class="text-muted">(اختياري)</span></label>
+              <textarea class="form-control" name="message" rows="3" maxlength="4000" placeholder="اكتب رسالة لإظهارها جاهزة في واتساب ويب"></textarea>
+            </div>
+            <div class="small text-warning mt-3">داخل لوحة آل عِشان الإرسال الحر مشروط بنافذة 24 ساعة. فتح واتساب ويب يسمح بالكتابة اليدوية، لكن لا يضمن حساب المرسل ولا مزامنة الرسالة تلقائيًا.</div>
         </div>
         <div class="modal-footer border-secondary">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
-          <button type="submit" class="btn btn-success">فتح المحادثة</button>
+          <button type="submit" class="btn btn-outline-secondary">فتح المحادثة داخل البرنامج</button>
+          <button type="submit" class="btn btn-success" formaction="{{url_for('wa_manual_open')}}" formtarget="_blank">💬 فتح واتساب ويب مباشرة</button>
         </div>
       </form>
     </div>
