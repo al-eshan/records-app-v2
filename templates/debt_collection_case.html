@@ -45,6 +45,47 @@
 <div class="col-12"><button class="btn btn-primary">حفظ المتابعة</button></div></form></div>
 <div class="tile-card mb-3"><h5>سجل المتابعات</h5><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>التاريخ</th><th>النوع</th><th>الملاحظات</th><th>المتابعة القادمة</th><th>الموظف</th></tr></thead><tbody>
 {% for item in followups %}<tr><td>{{item.created_at}}</td><td>{{item.action_type}}</td><td>{{item.note}}</td><td>{{item.followup_date or '-'}}</td><td>{{item.performed_by}}</td></tr>{% else %}<tr><td colspan="5">لا توجد متابعات</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="tile-card mb-3">
+  <h5>سجل رسائل واتساب ويب — تأكيد الموظف</h5>
+  <p class="small text-muted">فتح واتساب ويب لا يثبت الإرسال. بعد ضغط إرسال داخل واتساب، عد هنا وأكّد العملية؛ هذا إقرار يدوي وليس إيصال تسليم من واتساب.</p>
+  <div class="table-responsive"><table class="table table-bordered table-striped align-middle">
+    <thead><tr><th>فتح المحادثة (بتوقيت السعودية)</th><th>رقم الإرسال المعتمد</th><th>الموظف</th><th>الحالة</th><th>وقت التأكيد</th><th>الإجراء</th></tr></thead>
+    <tbody>
+    {% for attempt in manual_attempts %}
+    <tr>
+      <td>{{ attempt.opened_at|debt_riyadh }}</td>
+      <td>{{ attempt.source_label or attempt.wa_number_id }}</td>
+      <td>{{ attempt.opened_by }}</td>
+      <td>{% if attempt.status=='staff_confirmed' %}<span class="badge bg-success">أكد الموظف الإرسال</span>
+      {% elif attempt.status=='not_sent' %}<span class="badge bg-secondary">لم تُرسل</span>
+      {% else %}<span class="badge bg-warning text-dark">فتح فقط — بانتظار التأكيد</span>{% endif %}</td>
+      <td>{{ (attempt.confirmed_sent_at|debt_riyadh) if attempt.confirmed_sent_at else '-' }}</td>
+      <td>
+        {% if attempt.status=='opened' and (is_admin or attempt.opened_by==current_username) %}
+        <div class="d-flex gap-1 flex-wrap">
+          <form method="post" action="{{url_for('debt_confirm_manual_send',es=es,debt_id=row.id)}}"
+                onsubmit="return confirm('هل أرسلت الرسالة بالفعل في واتساب ويب؟');">
+            <input type="hidden" name="confirm_token" value="{{debt_confirm_token}}">
+            <input type="hidden" name="attempt_id" value="{{attempt.id}}">
+            <input type="hidden" name="return_to" value="case">
+            <input type="hidden" name="action" value="confirm">
+            <button type="submit" class="btn btn-sm btn-success">✅ تأكيد الإرسال</button>
+          </form>
+          <form method="post" action="{{url_for('debt_confirm_manual_send',es=es,debt_id=row.id)}}">
+            <input type="hidden" name="confirm_token" value="{{debt_confirm_token}}">
+            <input type="hidden" name="attempt_id" value="{{attempt.id}}">
+            <input type="hidden" name="return_to" value="case">
+            <input type="hidden" name="action" value="not_sent">
+            <button type="submit" class="btn btn-sm btn-outline-secondary">لم أُرسل</button>
+          </form>
+        </div>
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% else %}<tr><td colspan="6">لا توجد محاولات فتح واتساب ويب مسجلة لهذا العميل.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</div>
 <div class="tile-card mb-3"><h5>الرسائل المسجلة في واتساب المشروع</h5><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>التاريخ</th><th>الاتجاه</th><th>الحالة</th><th>الموظف</th><th>نص الرسالة</th></tr></thead><tbody>
 {% for m in messages %}<tr><td>{{m.sent_at}}</td><td>{{'صادر' if m.direction=='out' else 'وارد'}}</td><td>{{m.status or '-'}}</td><td>{{m.sent_by_username or '-'}}</td><td>{{(m.body or '')[:200]}}</td></tr>{% else %}<tr><td colspan="5">لا توجد رسائل مسجلة من الرقم المخصص</td></tr>{% endfor %}</tbody></table></div>
 {% if row.last_sent_at %}<p class="small">آخر إرسال مسجل يدويًا بالنظام السابق: {{row.last_sent_at}} (غير مؤكد من المزود)</p>{% endif %}
