@@ -18,5 +18,18 @@
   </form>
  </div>
  {% else %}<div class="alert alert-success">لا توجد أسماء أو أرقام متطابقة في الملفات غير المدمجة حاليًا.</div>{% endfor %}
+ <div class="tile-card mt-3">
+   <h5>سجل عمليات الدمج المعتمدة</h5>
+   <p class="small text-muted">ظهور عملية الدمج هنا دليل على توحيد ملف العميل. جميع الديون محفوظة تحت الملف الأساسي.</p>
+   <div class="table-responsive"><table class="table table-bordered align-middle">
+     <thead><tr><th>التاريخ</th><th>الملف الموحد</th><th>الملف المدمج</th><th>عدد الديون المنقولة</th><th>الرصيد بعد الدمج</th><th>تم بواسطة</th></tr></thead>
+     <tbody>{% for m in recent_merges %}<tr>
+       <td>{{m.performed_at}}</td>
+       <td><a href="{{url_for('debt_customer_profile',customer_id=m.target_customer_id)}}">#{{m.target_customer_id}} — {{m.target_name}}</a></td>
+       <td>#{{m.source_customer_id}} — {{m.source_name or '-'}}</td>
+       <td>{{m.linked_debts}}</td><td>{{'%.2f'|format(m.total_after or 0)}} ريال</td><td>{{m.performed_by}}</td>
+     </tr>{% else %}<tr><td colspan="6" class="text-center">لم تُسجل عمليات دمج بعد</td></tr>{% endfor %}</tbody>
+   </table></div>
+ </div>
 </div>
 {% endblock %}

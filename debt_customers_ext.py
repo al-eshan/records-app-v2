@@ -201,7 +201,14 @@ def install_customer_directory(app,get_db,ensure_debts,has_debt_permission,maste
             disputed=any(p and p['dispute'] for p in (p_a,p_b))
             with db:
                 db.execute('UPDATE debts_ledger SET customer_id=? WHERE customer_id=?',(target_id,source_id))
+                # Flatten older aliases if the source profile was itself a prior merge target.
+                db.execute('''UPDATE debt_customers
+                    SET merged_into_customer_id=?,updated_at=datetime('now')
+                    WHERE merged_into_customer_id=?''',(target_id,source_id))
                 db.execute('UPDATE debt_customers SET merged_into_customer_id=?,updated_at=datetime(\'now\') WHERE id=?',(target_id,source_id))
+                if db.execute('SELECT COUNT(*) FROM debts_ledger WHERE customer_id=?',
+                              (source_id,)).fetchone()[0] != 0:
+                    raise RuntimeError('Customer merge did not transfer every debt; rolled back')
                 db.execute('''INSERT INTO debt_customer_policy(customer_id,policy,dispute,note,updated_by,updated_at)
                   VALUES (?,'pending',?,?,?,datetime('now'))
                   ON CONFLICT(customer_id) DO UPDATE SET policy='pending',consent_at=NULL,
@@ -217,8 +224,8 @@ def install_customer_directory(app,get_db,ensure_debts,has_debt_permission,maste
                    VALUES (?,?,?,?,?,?,?)''',
                    (target_id,source_id,source_count,before,after,session.get('username'),
                     (request.form.get('note') or '').strip()[:300]))
-            flash('تم توحيد ملف العميل دون حذف أي دين، وتم تعليق المراسلة حتى تراجعها الإدارة.','success')
-            return redirect(url_for('debt_customer_duplicates'))
+            flash('تم دمج الملفين بنجاح. ستجد الديون كلها تحت ملف العميل الموحد، ولم يُحذف أي دين.','success')
+            return redirect(url_for('debt_customer_profile',customer_id=target_id,merged='1'))
         customers=db.execute('''SELECT * FROM debt_customers WHERE merged_into_customer_id IS NULL ORDER BY id DESC''').fetchall()
         groups={}
         for c in customers:
@@ -239,7 +246,57 @@ def install_customer_directory(app,get_db,ensure_debts,has_debt_permission,maste
                 cards.append({'id':c['id'],'name':c['name'],'mobile':c['mobile'],
                               'count':stats['count'],'balance':stats['balance']})
             dup_groups.append({'reason':('تطابق الجوال' if key.startswith('P:') else 'تطابق الاسم'), 'customers':cards})
-        return render_template('debt_customer_duplicates.html',groups=dup_groups)
+        recent_merges=db.execute('''SELECT a.*, t.name AS target_name, s.name AS source_name
+            FROM debt_customer_merge_audit a
+            LEFT JOIN debt_customers t ON t.id=a.target_customer_id
+            LEFT JOIN debt_customers s ON s.id=a.source_customer_id
+            ORDER BY a.id DESC LIMIT 50''').fetchall()
+        return render_template('debt_customer_duplicates.html',groups=dup_groups,
+                               recent_merges=recent_merges)
+
+    @app.route('/accounting/debts/customer/<int:customer_id>',methods=['GET'])
+    def debt_customer_profile(customer_id):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        db=db_ready()
+        customer=db.execute('SELECT * FROM debt_customers WHERE id=?',(customer_id,)).fetchone()
+        if not customer:
+            flash('ملف العميل غير موجود.','warning')
+            return redirect(url_for('debt_customer_index'))
+        # Old profile IDs remain as archived aliases. Open the surviving
+        # profile even when following an old bookmark.
+        visited=set()
+        while customer['merged_into_customer_id'] is not None:
+            if int(customer['id']) in visited or len(visited)>=20:
+                return render_template('no_permission.html'),403
+            visited.add(int(customer['id']))
+            customer_id=int(customer['merged_into_customer_id'])
+            customer=db.execute('SELECT * FROM debt_customers WHERE id=?',(customer_id,)).fetchone()
+            if not customer:
+                return render_template('no_permission.html'),403
+        debts=db.execute('SELECT * FROM debts_ledger WHERE customer_id=? ORDER BY invoice_date DESC,id DESC',
+                         (customer_id,)).fetchall()
+        visible=[r for r in debts if authorized(r['es'])]
+        if not visible:
+            return render_template('no_permission.html'),403
+        totals={
+            'invoice':sum(float(r['invoice_total'] or 0) for r in visible),
+            'paid':sum(float(r['paid_amount'] or 0) for r in visible),
+            'remaining':sum(float(r['remaining_amount'] or 0) for r in visible),
+        }
+        merges=[]
+        aliases=[]
+        if is_admin():
+            merges=db.execute('''SELECT a.*, s.name AS old_name, s.mobile AS old_mobile
+                FROM debt_customer_merge_audit a
+                LEFT JOIN debt_customers s ON s.id=a.source_customer_id
+                WHERE a.target_customer_id=? ORDER BY a.id DESC''',(customer_id,)).fetchall()
+            aliases=db.execute('''SELECT id,name,mobile FROM debt_customers
+                WHERE merged_into_customer_id=? ORDER BY id DESC''',(customer_id,)).fetchall()
+        return render_template('debt_customer_profile.html',customer=customer,
+                               debts=visible,totals=totals,
+                               aliases=aliases,merges=merges,
+                               is_admin=is_admin(),merged=request.args.get('merged')=='1')
 
     @app.route('/accounting/debts/customers',methods=['GET'])
     def debt_customer_index():
@@ -253,15 +310,35 @@ def install_customer_directory(app,get_db,ensure_debts,has_debt_permission,maste
              GROUP_CONCAT(DISTINCT d.es) AS branches
              FROM debt_customers c JOIN debts_ledger d ON d.customer_id=c.id
              WHERE c.merged_into_customer_id IS NULL'''
-        clauses=[];params=[]
         allowed=[es for es in ('ES1','ES2','ES3') if authorized(es)]
-        placeholders=','.join(['?']*len(allowed));clauses.append('d.es IN ('+placeholders+')');params.extend(allowed)
+        placeholders=','.join(['?']*len(allowed))
+        query+=' AND d.es IN ('+placeholders+') GROUP BY c.id ORDER BY c.name LIMIT 3000'
+        all_customers=db.execute(query,allowed).fetchall()
         if q:
-            clauses.append('(c.normalized_name LIKE ? OR c.normalized_phone LIKE ? OR d.customer_name LIKE ? OR d.mobile LIKE ?)')
-            params += ['%'+name+'%','%'+(phone or q)+'%','%'+q+'%','%'+q+'%']
-        query+=' AND '+' AND '.join(clauses)+' GROUP BY c.id ORDER BY c.name LIMIT 250'
-        customers=db.execute(query,params).fetchall()
-        return render_template('debt_customers_index.html',customers=customers,q=q,is_admin=is_admin())
+            # Evaluate the filter AFTER aggregating. A search for an old alias
+            # must not hide other debt lines and understate the balance.
+            q_norm=normalized_name(q)
+            q_digits=''.join(ch for ch in q if ch.isdigit())
+            matches=set()
+            for c in all_customers:
+                if ((q_norm and q_norm in normalized_name(c['name'])) or
+                    (q_digits and q_digits in ''.join(ch for ch in (c['mobile'] or '') if ch.isdigit()))):
+                    matches.add(int(c['id']))
+            if all_customers:
+                allowed_ids={int(c['id']) for c in all_customers}
+                for d in db.execute('''SELECT customer_id,customer_name,mobile,es
+                      FROM debts_ledger''').fetchall():
+                    if d['es'] not in allowed or not d['customer_id'] or int(d['customer_id']) not in allowed_ids:
+                        continue
+                    if ((q_norm and q_norm in normalized_name(d['customer_name'])) or
+                        (q_digits and q_digits in ''.join(ch for ch in (d['mobile'] or '') if ch.isdigit()))):
+                        matches.add(int(d['customer_id']))
+            customers=[c for c in all_customers if int(c['id']) in matches][:250]
+        else:
+            customers=all_customers[:250]
+        merged_ids={int(r['target_customer_id']) for r in db.execute('SELECT DISTINCT target_customer_id FROM debt_customer_merge_audit').fetchall()}
+        return render_template('debt_customers_index.html',customers=customers,q=q,
+                               merged_ids=merged_ids,is_admin=is_admin())
 
     # Named helper returned for integration into existing add route.
     return {'setup':db_ready, 'display_matches':display_matches,

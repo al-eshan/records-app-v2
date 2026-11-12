@@ -8,6 +8,39 @@ import json
 from debt_customers_ext import ensure_customer_schema, normalized_phone
 
 
+def debt_message_decision(row, policy):
+    """Single, customer-level administrative policy for every debt row.
+
+    Only a positive, documented opt-in gives access to the direct WhatsApp
+    link; every other administrative decision replaces the send action.
+    Final sending still depends on WhatsApp's platform rules and window.
+    """
+    def state(label, can_send=False, tone='secondary'):
+        return {'label': label, 'can_send': can_send, 'tone': tone}
+
+    if float(row['remaining_amount'] or 0) <= 0:
+        return state('تم السداد — لا توجد مديونية', tone='secondary')
+    if policy and int(policy['dispute'] or 0):
+        return state('إيقاف المراسلة — اعتراض على الدين', tone='danger')
+    if not policy:
+        return state('بانتظار قرار الإدارة', tone='warning')
+    policy_name = str(policy['policy'] or 'pending')
+    if policy_name == 'blocked':
+        return state('قرار الإدارة: ممنوع التواصل', tone='danger')
+    if policy_name == 'call':
+        return state('قرار الإدارة: اتصال فقط', tone='warning')
+    if policy_name == 'internal':
+        return state('قرار الإدارة: متابعة داخلية فقط', tone='secondary')
+    if policy_name == 'paused':
+        until = str(policy['pause_until'] or '').strip()
+        return state('قرار الإدارة: المراسلة مؤجلة' + (' حتى ' + until if until else ''), tone='warning')
+    if policy_name != 'allow':
+        return state('بانتظار قرار الإدارة', tone='warning')
+    if not policy['consent_at'] or not str(policy['consent_source'] or '').strip():
+        return state('بانتظار توثيق موافقة العميل', tone='warning')
+    return state('إرسال رسالة', can_send=True, tone='success')
+
+
 def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
                             wa_allowed_ids, normalize_phone, message_builder=None):
     def admin():
@@ -63,9 +96,12 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
                 amounts[es_code] = amounts.get(es_code,0.0) + max(0.0,float(item['remaining_amount'] or 0))
         details = sorted((code,round(amount,2)) for code,amount in amounts.items() if amount > 0)
         total = round(sum(amount for _,amount in details),2)
+        canonical = db.execute('SELECT name FROM debt_customers WHERE id=?',
+                               (row['customer_id'],)).fetchone()
+        display_name = canonical['name'] if canonical else row['customer_name']
         if message_builder:
-            return message_builder(row['customer_name'],total,details)
-        return f"عميلنا العزيز {row['customer_name']}، المبلغ المستحق {total:.2f} ريال."
+            return message_builder(display_name,total,details)
+        return f"عميلنا العزيز {display_name}، المبلغ المستحق {total:.2f} ريال."
 
     def safe_date(raw):
         if not raw:
@@ -102,6 +138,70 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
         numbers = db.execute('SELECT * FROM wa_numbers ORDER BY sort_order,id').fetchall()
         settings = db.execute('SELECT * FROM debt_collection_settings WHERE id=1').fetchone()
         return render_template('debt_communication_settings.html', numbers=numbers, settings=settings)
+
+    def _open_approved_whatsapp_chat(db, es, row, debt_id, error_target):
+        """Open the preconfigured WhatsApp chat directly, without sending.
+
+        Reused by both the ledger's Send Message action and the optional
+        button on the collection follow-up page.
+        """
+        p = db.execute('SELECT * FROM debt_customer_policy WHERE customer_id=?',(row['customer_id'],)).fetchone()
+        decision = debt_message_decision(row, p)
+        if not decision['can_send']:
+            flash(decision['label'] + ' — لا يمكن فتح رسالة تحصيل لهذا العميل.', 'warning')
+            return redirect(error_target)
+        sender = db.execute('''SELECT n.* FROM debt_collection_settings s
+            JOIN wa_numbers n ON n.id=s.wa_number_id
+            WHERE s.id=1 AND n.is_active=1''').fetchone()
+        if not sender:
+            flash('حدد رقم واتساب التحصيل أولًا.', 'danger')
+            return redirect(error_target)
+        nid = int(sender['id'])
+        if nid not in wa_allowed_ids(db,require_reply=True):
+            flash('ليس لديك صلاحية الرد من رقم التحصيل المحدد.', 'danger')
+            return redirect(error_target)
+        # After a merge, historical invoices can contain an old phone spelling
+        # or an obsolete number. Outbound communication uses the verified
+        # canonical customer contact, never the historical invoice field.
+        canonical = db.execute('SELECT mobile FROM debt_customers WHERE id=?',
+                               (row['customer_id'],)).fetchone()
+        phone = normalize_phone(canonical['mobile']) if canonical else ''
+        if not phone or phone == normalize_phone(sender['phone_number']):
+            flash('رقم العميل غير صالح أو مطابق لرقم المؤسسة.', 'danger')
+            return redirect(error_target)
+        conversation = db.execute('''SELECT id FROM wa_conversations
+           WHERE wa_number_id=? AND contact_wa_id=? ORDER BY id DESC LIMIT 1''',(nid,phone)).fetchone()
+        with db:
+            if conversation:
+                cid=conversation['id']
+            else:
+                c = db.execute('''INSERT INTO wa_conversations
+                 (wa_number_id,contact_wa_id,contact_name,last_message,last_message_at,last_inbound_at,unread_count,updated_at)
+                 VALUES (?,?,?,'محادثة تحصيل — لم يتم إرسال رسالة بعد',NULL,NULL,0,datetime('now'))''',
+                 (nid,phone,row['customer_name']))
+                cid=c.lastrowid
+            db.execute('''INSERT INTO debt_wa_open_log
+             (debt_id,wa_number_id,conversation_id,opened_by) VALUES (?,?,?,?)''',
+             (debt_id,nid,cid,session.get('username') or ''))
+        # This draft is presented in the inbox, never transmitted automatically.
+        session['_debt_wa_draft'] = {'conversation_id':int(cid),
+                                     'text':prepared_for_customer(db,row)}
+        flash('فُتحت المحادثة مع مسودة الرسالة. لم تُرسل أي رسالة بعد.', 'info')
+        return redirect(url_for('whatsapp_branches',conversation=cid,number=nid))
+    @app.route('/accounting/debts/<es>/whatsapp-direct/<int:debt_id>')
+    def debt_whatsapp_direct(es, debt_id):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        es = (es or '').strip().upper()
+        db = get_db()
+        setup(db)
+        row = get_case(db, es, debt_id)
+        if row is None:
+            return render_template('no_permission.html'), 403
+        return _open_approved_whatsapp_chat(
+            db, es, row, debt_id,
+            url_for('accounting_debts_branch', es=es)
+        )
 
     @app.route('/accounting/debts/<es>/case/<int:debt_id>', methods=['GET', 'POST'])
     def debt_collection_case(es, debt_id):
@@ -190,51 +290,10 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
                  VALUES (?,'note',?,?)''',(debt_id,'رفعت الإدارة تعليق الاعتراض بعد المراجعة.',session.get('username')))
             flash('تم رفع تعليق الاعتراض.', 'success')
         elif action == 'open_chat':
-            p = db.execute('SELECT * FROM debt_customer_policy WHERE customer_id=?',(row['customer_id'],)).fetchone()
-            if not p or p['policy'] != 'allow' or not p['consent_at'] or p['dispute']:
-                flash('المراسلة غير مصرح بها أو المديونية محل اعتراض.', 'danger')
-                return redirect(url_for('debt_collection_case',es=es,debt_id=debt_id))
-            if float(row['remaining_amount'] or 0) <= 0:
-                flash('لا توجد مديونية متبقية.', 'danger')
-                return redirect(url_for('debt_collection_case',es=es,debt_id=debt_id))
-            sender = db.execute('''SELECT n.* FROM debt_collection_settings s
-                JOIN wa_numbers n ON n.id=s.wa_number_id
-                WHERE s.id=1 AND n.is_active=1''').fetchone()
-            if not sender:
-                flash('حدد رقم واتساب التحصيل أولًا.', 'danger')
-                return redirect(url_for('debt_collection_case',es=es,debt_id=debt_id))
-            nid = int(sender['id'])
-            if nid not in wa_allowed_ids(db,require_reply=True):
-                flash('ليس لديك صلاحية الرد من رقم التحصيل المحدد.', 'danger')
-                return redirect(url_for('debt_collection_case',es=es,debt_id=debt_id))
-            phone = normalize_phone(row['mobile'])
-            canonical = db.execute('SELECT mobile FROM debt_customers WHERE id=?',(row['customer_id'],)).fetchone()
-            canonical_phone = normalize_phone(canonical['mobile']) if canonical else ''
-            if not canonical_phone or phone != canonical_phone:
-                flash('رقم هذا الدين لا يطابق جوال ملف العميل الموحد؛ راجعه قبل أي مراسلة.', 'danger')
-                return redirect(url_for('debt_collection_case',es=es,debt_id=debt_id))
-            if not phone or phone == normalize_phone(sender['phone_number']):
-                flash('رقم العميل غير صالح أو مطابق لرقم المؤسسة.', 'danger')
-                return redirect(url_for('debt_collection_case',es=es,debt_id=debt_id))
-            conversation = db.execute('''SELECT id FROM wa_conversations
-               WHERE wa_number_id=? AND contact_wa_id=? ORDER BY id DESC LIMIT 1''',(nid,phone)).fetchone()
-            with db:
-                if conversation:
-                    cid=conversation['id']
-                else:
-                    c = db.execute('''INSERT INTO wa_conversations
-                     (wa_number_id,contact_wa_id,contact_name,last_message,last_message_at,last_inbound_at,unread_count,updated_at)
-                     VALUES (?,?,?,'محادثة تحصيل — لم يتم إرسال رسالة بعد',NULL,NULL,0,datetime('now'))''',
-                     (nid,phone,row['customer_name']))
-                    cid=c.lastrowid
-                db.execute('''INSERT INTO debt_wa_open_log
-                 (debt_id,wa_number_id,conversation_id,opened_by) VALUES (?,?,?,?)''',
-                 (debt_id,nid,cid,session.get('username') or ''))
-            # This draft is presented in the inbox, never transmitted automatically.
-            session['_debt_wa_draft'] = {'conversation_id':int(cid),
-                                         'text':prepared_for_customer(db,row)}
-            flash('فُتحت المحادثة مع مسودة الرسالة. لم تُرسل أي رسالة بعد.', 'info')
-            return redirect(url_for('whatsapp_branches',conversation=cid,number=nid))
+            return _open_approved_whatsapp_chat(
+                db, es, row, debt_id,
+                url_for('debt_collection_case', es=es, debt_id=debt_id)
+            )
         if request.method == 'POST':
             return redirect(url_for('debt_collection_case',es=es,debt_id=debt_id))
         policy=db.execute('SELECT * FROM debt_customer_policy WHERE customer_id=?',(row['customer_id'],)).fetchone()
@@ -243,9 +302,11 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
         followups=db.execute('SELECT * FROM debt_followups WHERE debt_id=? ORDER BY id DESC LIMIT 100',(debt_id,)).fetchall()
         opened=db.execute('''SELECT o.*,n.label FROM debt_wa_open_log o LEFT JOIN wa_numbers n
           ON n.id=o.wa_number_id WHERE o.debt_id=? ORDER BY o.id DESC LIMIT 100''',(debt_id,)).fetchall()
+        canonical=db.execute('SELECT name,mobile FROM debt_customers WHERE id=?',
+                             (row['customer_id'],)).fetchone()
         messages=[]
         if settings and settings['id']:
-            phone=normalize_phone(row['mobile'])
+            phone=normalize_phone(canonical['mobile']) if canonical else ''
             if phone:
                 messages=db.execute('''SELECT m.sent_at,m.direction,m.status,m.body,m.sent_by_username
                 FROM wa_messages m JOIN wa_conversations c ON c.id=m.conversation_id
@@ -257,4 +318,6 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
         return render_template('debt_collection_case.html',row=row,es=es,policy=policy,
           settings=settings,followups=followups,opened=opened,messages=messages,
           related=related,related_total=sum(float(x['remaining_amount'] or 0) for x in related),
-          prepared_message=prepared_for_customer(db,row),is_admin=admin())
+          prepared_message=prepared_for_customer(db,row),
+          customer_display_name=canonical['name'] if canonical else row['customer_name'],
+          decision=debt_message_decision(row, policy), is_admin=admin())

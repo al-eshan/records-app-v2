@@ -2222,18 +2222,55 @@ def whatsapp_branches():
         template_load_error=template_load_error,
         debt_draft_text=debt_draft_text,
     )
-    # Safely prefill the *existing* WhatsApp composer without replacing its
-    # template or changing any other conversation behaviour.
+    # Keep all other WhatsApp functionality unchanged.  An active 24-hour
+    # window receives the debt message in the normal composer.  Otherwise,
+    # preserve a visible read-only draft: opening the chat is NOT a send.
     if debt_draft_text:
         from markupsafe import escape as escape_html
+        escaped_draft = str(escape_html(debt_draft_text))
         marker = 'id="waMessage"'
         found = html.find(marker)
         if found >= 0:
             content_start = html.find('>', found) + 1
             content_end = html.find('</textarea>', content_start)
             if content_start > 0 and content_end >= content_start:
-                html = (html[:content_start] + str(escape_html(debt_draft_text))
-                        + html[content_end:])
+                html = html[:content_start] + escaped_draft + html[content_end:]
+        else:
+            # There is no message composer until the customer opens a
+            # service window. Show the prepared text without a send control.
+            draft_preview = (
+                '<div class="wa-composer" style="border:1px solid #eab308; padding:12px">'
+                '<div class="wa-window-note" style="color:#facc15">'
+                'مسودة المطالبة من دفتر الديون — لم يتم إرسالها. '
+                'يتطلب إرسال الرسالة خارج نافذة 24 ساعة قالبًا معتمدًا وحالة استخدام مسموحة.</div>'
+                '<label for="debtWaReadonlyDraft" class="form-label small">نص المسودة</label>'
+                '<textarea id="debtWaReadonlyDraft" class="form-control" '
+                'rows="7" readonly></textarea>'
+                '<button id="copyDebtWaDraft" type="button" '
+                'class="btn btn-outline-info btn-sm mt-2">نسخ نص المسودة</button>'
+                '</div>'
+            )
+            # Insert the preview in the existing chat section (and nowhere
+            # else), even when no API key / approved template is available.
+            chat_start = html.find('<section class="wa-chat">')
+            chat_end = html.find('</section>', chat_start) if chat_start >= 0 else -1
+            if chat_end >= 0:
+                html = html[:chat_end] + draft_preview + html[chat_end:]
+                from json import dumps as json_dumps
+                draft_json = json_dumps(debt_draft_text, ensure_ascii=False)
+                # Escape any HTML-closing delimiter when placed in a JS string.
+                draft_json = draft_json.replace('<', r'\u003c')
+                script = (
+                    '<script>(function(){const v=' + draft_json + ';'
+                    'const e=document.getElementById("debtWaReadonlyDraft");'
+                    'if(e)e.value=v;'
+                    'const b=document.getElementById("copyDebtWaDraft");'
+                    'if(b)b.addEventListener("click",function(){'
+                    'if(navigator.clipboard)navigator.clipboard.writeText(v);'
+                    'else if(e){e.select();document.execCommand("copy");}'
+                    '});})();</script>'
+                )
+                html += script
     return html
 
 
@@ -4133,8 +4170,9 @@ def has_debt_permission(es):
 @app.route("/accounting/debts/<es>/whatsapp/<int:row_id>")
 @login_required
 def accounting_debts_whatsapp(es,row_id):
-    # Redirect legacy direct WhatsApp link to opt-in debt collection case.
-    return redirect(url_for("debt_collection_case",es=es,debt_id=row_id))
+    # Keep old bookmarks working: go straight to the project's WhatsApp inbox.
+    # The destination validates debt permissions, consent and the fixed sender.
+    return redirect(url_for("debt_whatsapp_direct", es=es, debt_id=row_id))
 
 
 @app.route("/accounting/debts/<es>", methods=["GET", "POST"])
@@ -4350,52 +4388,121 @@ def accounting_debts_branch(es):
         return redirect(url_for("accounting_debts_branch", es=es))
 
     q = (request.args.get("q") or "").strip()
-
     if es == "ALL":
-        if q:
-            rows = db.execute("""
-                SELECT *
-                FROM debts_ledger
-                WHERE (
-                        customer_name LIKE ?
-                        OR mobile LIKE ?
-                      )
-                ORDER BY id DESC
-            """, (
-                f"%{q}%",
-                f"%{q}%"
-            )).fetchall()
-        else:
-            rows = db.execute("""
-                SELECT *
-                FROM debts_ledger
-                ORDER BY id DESC
-            """).fetchall()
+        rows = db.execute("SELECT * FROM debts_ledger ORDER BY id DESC").fetchall()
     else:
-        if q:
-            rows = db.execute("""
-                SELECT *
-                FROM debts_ledger
-                WHERE es = ?
-                  AND (
-                        customer_name LIKE ?
-                        OR mobile LIKE ?
-                      )
-                ORDER BY id DESC
-            """, (
-                es,
-                f"%{q}%",
-                f"%{q}%"
-            )).fetchall()
-        else:
-            rows = db.execute("""
-                SELECT *
-                FROM debts_ledger
-                WHERE es = ?
-                ORDER BY id DESC
-            """, (es,)).fetchall()
-
+        rows = db.execute("SELECT * FROM debts_ledger WHERE es=? ORDER BY id DESC", (es,)).fetchall()
     rows = [r for r in rows if has_debt_permission(r["es"])]
+    if q:
+        # Match on the canonical profile or on ANY historical invoice alias.
+        # Once a customer matches, return ALL permitted invoice rows for that
+        # customer, not just the single old alias/invoice that matched.
+        name_query = normalized_name(q)
+        phone_query = ''.join(ch for ch in q if ch.isdigit())
+        profiles = db.execute('''SELECT id,normalized_name,normalized_phone,name,mobile
+            FROM debt_customers WHERE merged_into_customer_id IS NULL''').fetchall()
+        matching_ids = set()
+        for c in profiles:
+            if ((name_query and name_query in (c['normalized_name'] or ''))
+                    or (phone_query and phone_query in (c['normalized_phone'] or ''))
+                    or q in (c['mobile'] or '')):
+                matching_ids.add(int(c['id']))
+        for r in rows:
+            if ((name_query and name_query in normalized_name(r['customer_name']))
+                    or (phone_query and phone_query in ''.join(ch for ch in (r['mobile'] or '') if ch.isdigit()))):
+                if r['customer_id']:
+                    matching_ids.add(int(r['customer_id']))
+        rows = [r for r in rows if int(r['customer_id'] or 0) in matching_ids]
+
+    canonical_phones = {
+        int(c["id"]): c["mobile"]
+        for c in db.execute("SELECT id,mobile FROM debt_customers WHERE merged_into_customer_id IS NULL").fetchall()
+    }
+
+    # Customer policies apply across every branch. Display each management
+    # decision INSTEAD of the Send Message button when sending is not approved.
+    # Query once (rather than one lookup per invoice/row).
+    policy_by_customer = {
+        int(p['customer_id']): p
+        for p in db.execute('SELECT customer_id,policy,consent_at,consent_source,dispute,pause_until FROM debt_customer_policy').fetchall()
+    }
+    debt_message_decisions = {
+        int(r['id']): debt_message_decision(
+            r, policy_by_customer.get(int(r['customer_id'] or 0))
+        )
+        for r in rows
+    }
+    # The sender and staff reply permissions must be ready as well.
+    if any(d['can_send'] for d in debt_message_decisions.values()):
+        ensure_whatsapp_schema(db)
+        collection_sender = db.execute('''SELECT n.id FROM debt_collection_settings s
+            JOIN wa_numbers n ON n.id=s.wa_number_id
+            WHERE s.id=1 AND n.is_active=1''').fetchone()
+        reply_numbers = set(_wa_allowed_number_ids(db, require_reply=True))
+        for r in rows:
+            d = debt_message_decisions[int(r['id'])]
+            if not d['can_send']:
+                continue
+            if not collection_sender:
+                debt_message_decisions[int(r['id'])] = {
+                    'can_send': False, 'tone': 'warning',
+                    'label': 'رقم واتساب التحصيل غير محدد'
+                }
+            elif int(collection_sender['id']) not in reply_numbers:
+                debt_message_decisions[int(r['id'])] = {
+                    'can_send': False, 'tone': 'warning',
+                    'label': 'لا توجد صلاحية لرقم واتساب التحصيل'
+                }
+            elif not _wa_normalize_destination(canonical_phones.get(int(r['customer_id'] or 0))):
+                debt_message_decisions[int(r['id'])] = {
+                    'can_send': False, 'tone': 'warning',
+                    'label': 'رقم جوال العميل غير صالح'
+                }
+
+    # Group debt lines by their canonical customer profile. The ledger retains
+    # every historical invoice, but a merged customer appears only once in the
+    # customer overview. Do not rewrite legacy names, amounts or dates.
+    customer_profiles = {
+        int(c["id"]): c for c in db.execute(
+            "SELECT id,name,mobile FROM debt_customers WHERE merged_into_customer_id IS NULL"
+        ).fetchall()
+    }
+    merge_counts = {
+        int(c["target_customer_id"]): int(c["count"])
+        for c in db.execute("""SELECT target_customer_id,COUNT(*) AS count
+            FROM debt_customer_merge_audit GROUP BY target_customer_id""").fetchall()
+    }
+    grouped = {}
+    for item in rows:
+        cid = int(item["customer_id"] or 0)
+        # Migrations link every invoice to a profile. A legacy orphan, if any,
+        # is displayed independently and never combined with unrelated debt.
+        key = cid if cid else -int(item["id"])
+        if key not in grouped:
+            profile = customer_profiles.get(cid)
+            grouped[key] = {
+                "customer_id": cid,
+                "name": profile["name"] if profile else item["customer_name"],
+                "mobile": profile["mobile"] if profile else item["mobile"],
+                "items": [], "invoice": 0.0, "paid": 0.0,
+                "remaining": 0.0, "branches": set(),
+                "merge_count": merge_counts.get(cid, 0),
+            }
+        group = grouped[key]
+        group["items"].append(item)
+        group["invoice"] += float(item["invoice_total"] or 0)
+        group["paid"] += float(item["paid_amount"] or 0)
+        group["remaining"] += float(item["remaining_amount"] or 0)
+        group["branches"].add(item["es"])
+    customer_groups = list(grouped.values())
+    for group in customer_groups:
+        group["branches"] = ", ".join(sorted(group["branches"]))
+        group["debt_count"] = len(group["items"])
+        group["representative"] = next(
+            (item for item in group["items"] if float(item["remaining_amount"] or 0) > 0),
+            group["items"][0],
+        )
+        group["decision"] = debt_message_decisions.get(int(group["representative"]["id"]))
 
     total_invoice = sum((r["invoice_total"] or 0) for r in rows)
     total_paid = sum((r["paid_amount"] or 0) for r in rows)
@@ -4418,6 +4525,8 @@ def accounting_debts_branch(es):
         es=es,
         rows=rows,
         edit_row=edit_row,
+        debt_message_decisions=debt_message_decisions,
+        customer_groups=customer_groups,
         total_invoice=total_invoice,
         total_paid=total_paid,
         total_remaining=total_remaining,
@@ -5870,7 +5979,7 @@ def permissions_page():
 
 
 # Debt collection followups and fixed WhatsApp sender.
-from debt_collection_ext import install_debt_collection
+from debt_collection_ext import install_debt_collection, debt_message_decision
 install_debt_collection(app,get_db,ensure_debts_ledger_schema,
                         ensure_whatsapp_schema,_wa_allowed_number_ids,
                         _wa_normalize_destination,build_debt_whatsapp_message)

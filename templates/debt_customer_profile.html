@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-tiles" style="max-width:1150px;margin:auto">
+  <div class="page-titlebar d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <h3>ملف العميل الموحد #{{customer.id}} — {{customer.name}}</h3>
+      <span class="text-muted">رقم الجوال: {{customer.mobile or '-'}} | عدد الديون الظاهرة: {{debts|length}}</span>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{{url_for('debt_customer_index')}}" class="btn btn-outline-primary">بحث العملاء</a>
+      <a href="{{url_for('accounting_debts')}}" class="btn btn-secondary">دفتر الديون</a>
+      {% if is_admin %}<a href="{{url_for('debt_customer_duplicates')}}" class="btn btn-outline-warning">سجل الدمج</a>{% endif %}
+    </div>
+  </div>
+  {% if merged %}
+    <div class="alert alert-success"><strong>✓ تم الدمج بنجاح:</strong> أصبح العميل في ملف واحد، وتم ربط جميع سجلات الديون دون حذفها. تظهر العمليات منفصلة أدناه.</div>
+  {% endif %}
+  {% if aliases|length or merges|length %}
+    <div class="alert alert-info">
+      <strong>✓ ملف عميل مدمج ومعتمد</strong> — الملفات التاريخية المرتبطة: {{aliases|length}} | عمليات الدمج المسجلة: {{merges|length}}.
+      أسماء العملاء السابقة تظل ظاهرة في سجلات الديون لأغراض المراجعة ولا تعني وجود عميل مستقل جديد.
+    </div>
+  {% endif %}
+  <div class="row g-3 mb-3">
+    <div class="col-md-4"><div class="tile-card"><strong>إجمالي الديون</strong><div>{{'%.2f'|format(totals.invoice)}} ريال</div></div></div>
+    <div class="col-md-4"><div class="tile-card"><strong>إجمالي المسدد</strong><div>{{'%.2f'|format(totals.paid)}} ريال</div></div></div>
+    <div class="col-md-4"><div class="tile-card"><strong>إجمالي المتبقي</strong><div>{{'%.2f'|format(totals.remaining)}} ريال</div></div></div>
+  </div>
+  <div class="tile-card mb-3">
+    <h5>جميع سجلات ديون العميل — لا تُحذف بالدمج</h5>
+    <div class="table-responsive"><table class="table table-bordered align-middle text-center">
+      <thead><tr><th>رقم الدين</th><th>التاريخ</th><th>الفرع</th><th>الاسم عند تسجيل الفاتورة</th><th>الجوال وقت الفاتورة</th><th>إجمالي الفاتورة</th><th>المسدد</th><th>المتبقي</th><th>الإجراءات</th></tr></thead>
+      <tbody>{% for d in debts %}
+        <tr><td>{{d.id}}</td><td>{{d.invoice_date or '-'}}</td><td>{{d.es}}</td>
+          <td>{{d.customer_name}}</td><td>{{d.mobile or '-'}}</td>
+          <td>{{'%.2f'|format(d.invoice_total or 0)}}</td>
+          <td>{{'%.2f'|format(d.paid_amount or 0)}}</td>
+          <td>{{'%.2f'|format(d.remaining_amount or 0)}}</td>
+          <td><a href="{{url_for('debt_collection_case',es=d.es,debt_id=d.id)}}" class="btn btn-sm btn-info">المتابعة</a>
+              <a href="{{url_for('accounting_debts_detail',es=d.es,row_id=d.id)}}" class="btn btn-sm btn-outline-primary">الفاتورة</a></td></tr>
+      {% else %}<tr><td colspan="9">لا توجد ديون ضمن صلاحياتك</td></tr>{% endfor %}
+      </tbody></table></div>
+  </div>
+  {% if is_admin and aliases %}
+    <div class="tile-card mb-3">
+      <h5>الملفات السابقة التي تم توحيدها</h5>
+      <div class="table-responsive"><table class="table table-bordered">
+      <thead><tr><th>رقم الملف السابق</th><th>الاسم السابق</th><th>الجوال السابق</th><th>الملف الحالي</th></tr></thead>
+      <tbody>{% for a in aliases %}<tr><td>#{{a.id}}</td><td>{{a.name}}</td><td>{{a.mobile or '-'}}</td><td>#{{customer.id}}</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </div>
+  {% endif %}
+  {% if is_admin and merges %}
+    <div class="tile-card">
+      <h5>تواريخ وعمليات الدمج</h5>
+      <div class="table-responsive"><table class="table table-bordered">
+      <thead><tr><th>وقت الدمج</th><th>الملف المدمج</th><th>ديونه المنقولة</th><th>الرصيد قبل الدمج</th><th>الرصيد بعد الدمج</th><th>الموظف</th></tr></thead>
+      <tbody>{% for m in merges %}<tr><td>{{m.performed_at}}</td><td>#{{m.source_customer_id}} — {{m.old_name or '-'}}</td><td>{{m.linked_debts}}</td><td>{{'%.2f'|format(m.total_before or 0)}}</td><td>{{'%.2f'|format(m.total_after or 0)}}</td><td>{{m.performed_by}}</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </div>
+  {% endif %}
+  <p class="small text-muted mt-3">الإجماليات تخص الديون الظاهرة حسب صلاحيات الفرع فقط. دمج ملف العميل لا يلغي تكرار فاتورة أُدخلت مرتين بالخطأ؛ تلك الحالة تحتاج مراجعة وتصحيحًا منفصلًا.</p>
+</div>
+{% endblock %}
