@@ -382,6 +382,9 @@
           {% endif %}
           {% if can_manage_numbers %}
             <a class="btn btn-secondary btn-sm" href="{{ url_for('whatsapp_numbers_manage') }}">⚙️ إدارة الأرقام</a>
+            {% if session.get('username') == 'adm-es' %}
+            <a class="btn btn-outline-warning btn-sm" href="{{ url_for('whatsapp_connection_settings') }}">🔧 فحص الإرسال</a>
+            {% endif %}
           {% endif %}
         </div>
       </div>
@@ -512,7 +515,12 @@
                 <div class="wa-composer">
                   <div class="wa-window-note" style="color:#ffc107;">⏱️ لا توجد نافذة خدمة مفتوحة. ابدأ بقالب WhatsApp معتمد، وبعد رد العميل يمكنك الكتابة بحرية لمدة 24 ساعة.</div>
                   {% if template_load_error %}
-                    <div class="alert alert-warning py-2 mb-2">{{ template_load_error }}</div>
+                    <div class="alert alert-warning py-2 mb-2">
+                      {{ template_load_error }}
+                      {% if session.get('username') == 'adm-es' %}
+                        <a class="btn btn-sm btn-outline-warning mt-2" href="{{url_for('whatsapp_connection_settings', check=active_conversation['wa_number_id'])}}">فحص رقم واتساب وإعدادات Gupshup</a>
+                      {% endif %}
+                    </div>
                   {% elif approved_templates %}
                     <form method="post" action="{{ url_for('whatsapp_send_template', conversation_id=active_conversation['id']) }}" class="row g-2 align-items-end">
                       <div class="col-md-5">
@@ -532,7 +540,7 @@
                       <div class="col-md-2 d-grid"><button class="btn btn-primary" type="submit">إرسال القالب</button></div>
                     </form>
                   {% else %}
-                    <div class="alert alert-info py-2 mb-0">لا توجد قوالب نصية معتمدة حاليًا في Gupshup. أنشئ قالبًا من تبويب Templates ثم اعمل Sync.</div>
+                    <div class="alert alert-info py-2 mb-0">لا توجد قوالب نصية معتمدة لهذا الرقم حاليًا. يلزم اعتماد قالب صالح لدى Gupshup قبل مراسلة العميل خارج نافذة خدمة 24 ساعة. لا ترسل مطالبة تحصيل قبل التحقق من سماح سياسة واتساب بحالة الاستخدام.</div>
                   {% endif %}
                 </div>
               {% endif %}

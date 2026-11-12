@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-tiles" style="max-width:1120px;margin:auto">
+ <div class="page-titlebar d-flex justify-content-between align-items-center flex-wrap gap-2">
+   <div><h3>فحص وربط إرسال واتساب — Gupshup</h3><span class="text-muted">للإدارة فقط | دون إرسال رسائل تجريبية</span></div>
+   <div class="d-flex gap-2"><a href="{{url_for('whatsapp_branches')}}" class="btn btn-secondary">العودة إلى واتساب</a><a href="{{url_for('whatsapp_numbers_manage')}}" class="btn btn-outline-primary">إدارة الأرقام</a></div>
+ </div>
+ <div class="tile-card mb-3">
+   <h5>لماذا لا تستطيع الإرسال؟</h5>
+   <p>الرسائل العادية متاحة فقط خلال <strong>24 ساعة من آخر رسالة واردة من العميل</strong>. خارج هذه النافذة، يجب استخدام قالب معتمد يطابق الغرض المسموح، ومعرّف تطبيق Gupshup صحيح.</p>
+   <p>ستحتاج من <a href="https://www.gupshup.io/whatsapp/dashboard" target="_blank" rel="noopener noreferrer">لوحة Gupshup</a> إلى <strong>App ID</strong> و<strong>App Name</strong> الصحيحين. يبقى مفتاح <code>GUPSHUP_API_KEY</code> سرّيًا في إعدادات Environment في Render، ولا يُكتب في هذه الصفحة.</p>
+   <div class="alert alert-warning mb-0">هذه الصفحة لا تتجاوز قواعد واتساب. الموافقة على قالب لا تعني السماح بكل استخدامات التحصيل. الرسائل المخصصة للديون تخضع لشروط مزود الخدمة وواتساب.</div>
+ </div>
+ {% for n in providers %}
+ <div class="tile-card mb-3" id="number-{{n.id}}">
+   <div class="d-flex flex-wrap justify-content-between gap-2 align-items-center mb-2">
+     <h5 class="m-0">{{n.label}} — {{n.phone or 'لم يحدد رقم الجوال'}}</h5>
+     <span class="badge {{'bg-success' if n.is_active else 'bg-secondary'}}">{{'مفعّل' if n.is_active else 'غير مفعّل'}}</span>
+   </div>
+   <div class="row g-2 small mb-3">
+     <div class="col-md-4">الفرع: <strong>{{n.branch or '-'}}</strong></div>
+     <div class="col-md-4">مفتاح Gupshup API: <strong class="{{'text-success' if n.has_api_key else 'text-warning'}}">{{'موجود في إعدادات التشغيل' if n.has_api_key else 'غير مضبوط'}}</strong></div>
+     <div class="col-md-4">App ID: <strong class="{{'text-success' if n.app_id_effective else 'text-warning'}}">{{'محدد' if n.app_id_effective else 'مفقود'}}</strong></div>
+   </div>
+   <form method="post" class="row g-2 align-items-end">
+      <input type="hidden" name="number_id" value="{{n.id}}">
+      <div class="col-md-5">
+        <label class="form-label">Gupshup App ID لهذا الرقم</label>
+        <input class="form-control" type="text" name="gupshup_app_id" dir="ltr" maxlength="128" value="{{n.app_id_saved}}" placeholder="App ID من إعدادات Gupshup">
+      </div>
+      <div class="col-md-5">
+        <label class="form-label">Gupshup App Name</label>
+        <input class="form-control" type="text" name="gupshup_app_name" dir="ltr" maxlength="100" value="{{n.app_name_saved}}" placeholder="اسم التطبيق في Gupshup">
+      </div>
+      <div class="col-md-2 d-grid"><button type="submit" class="btn btn-primary">حفظ</button></div>
+      <div class="col-12 small text-muted">الاسم الفعّال حاليًا: {{n.app_name_effective}}. ترك الخانات فارغة يعيد الاستخدام إلى قيم Render إن كانت مضبوطة.</div>
+   </form>
+   <div class="mt-2"><a href="{{url_for('whatsapp_connection_settings',check=n.id)}}" class="btn btn-outline-info btn-sm">فحص القوالب المعتمدة لهذا الرقم</a></div>
+ </div>
+ {% endfor %}
+ {% if checked %}
+   <div class="tile-card mb-3" id="test-result">
+     <h5>نتيجة فحص {{checked.number.label}}</h5>
+     {% if checked.error %}
+       <div class="alert alert-warning">{{checked.error}}</div>
+     {% elif checked.count > 0 %}
+       <div class="alert alert-success">نجح الاستعلام عن القوالب من Gupshup: {{checked.count}} قالبًا نصيًا معتمدًا. هذا لا يؤكد القدرة على الإرسال أو ملاءمة القالب لكل رسالة.</div>
+       <ul>{% for t in checked.templates %}<li>{{t.name}} — {{t.language or '-'}} — {{t.category or '-'}}</li>{% endfor %}</ul>
+     {% else %}
+       <div class="alert alert-info">نجح الاتصال ولكن لا توجد قوالب نصية معتمدة حاليًا لهذا التطبيق. أنشئ قالبًا وقدّمه للمراجعة من لوحة Gupshup.</div>
+     {% endif %}
+   </div>
+ {% endif %}
+</div>
+{% endblock %}

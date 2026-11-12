@@ -729,6 +729,12 @@ def ensure_whatsapp_schema(db):
     number_cols = [r[1] for r in db.execute("PRAGMA table_info(wa_numbers)").fetchall()]
     if "meta_phone_number_id" not in number_cols:
         db.execute("ALTER TABLE wa_numbers ADD COLUMN meta_phone_number_id TEXT")
+    # Optional provider metadata: not credentials; safe, idempotent migrations.
+    # Actual API keys remain environment variables in Render.
+    if "gupshup_app_id" not in number_cols:
+        db.execute("ALTER TABLE wa_numbers ADD COLUMN gupshup_app_id TEXT")
+    if "gupshup_app_name" not in number_cols:
+        db.execute("ALTER TABLE wa_numbers ADD COLUMN gupshup_app_name TEXT")
 
     conv_cols = [r[1] for r in db.execute("PRAGMA table_info(wa_conversations)").fetchall()]
     if "last_inbound_at" not in conv_cols:
@@ -1241,8 +1247,25 @@ def _gupshup_api_key(branch_code=None):
     return _gupshup_env("GUPSHUP_API_KEY", branch_code)
 
 
+def _gupshup_provider_setting(branch_code, field):
+    """Read saved provider metadata for a branch; never store API secrets here."""
+    if not branch_code or field not in ("gupshup_app_id", "gupshup_app_name"):
+        return ""
+    try:
+        db = get_db()
+        row = db.execute(
+            f"SELECT {field} FROM wa_numbers WHERE branch_code=? AND is_active=1 "
+            "ORDER BY sort_order, id LIMIT 1", (str(branch_code).strip(),)
+        ).fetchone()
+        return str(row[field] or "").strip() if row else ""
+    except sqlite3.Error:
+        # Old databases may not have the new columns until ensure_whatsapp_schema().
+        return ""
+
+
 def _gupshup_app_name(branch_code=None):
-    return _gupshup_env("GUPSHUP_APP_NAME", branch_code) or "AlEshan"
+    return (_gupshup_provider_setting(branch_code, "gupshup_app_name")
+            or _gupshup_env("GUPSHUP_APP_NAME", branch_code) or "AlEshan")
 
 
 def _gupshup_source_number(branch_code=None, fallback=None):
@@ -1250,7 +1273,8 @@ def _gupshup_source_number(branch_code=None, fallback=None):
 
 
 def _gupshup_app_id(branch_code=None):
-    return _gupshup_env("GUPSHUP_APP_ID", branch_code)
+    return (_gupshup_provider_setting(branch_code, "gupshup_app_id")
+            or _gupshup_env("GUPSHUP_APP_ID", branch_code))
 
 
 def _gupshup_app_token(branch_code=None):
@@ -1306,8 +1330,10 @@ def _gupshup_extract_template_list(data):
 def _gupshup_get_approved_text_templates(branch_code=None):
     api_key = _gupshup_api_key(branch_code)
     app_id = _gupshup_app_id(branch_code)
-    if not api_key or not app_id:
-        return [], "أضف GUPSHUP_APP_ID في Render لعرض القوالب المعتمدة"
+    if not api_key:
+        return [], "لا يوجد Gupshup API Key لهذا الرقم. يجب إضافته في Render ضمن Environment."
+    if not app_id:
+        return [], "معرّف Gupshup App ID مفقود. ادخل إلى واتساب ← فحص الإرسال لضبطه لهذا الرقم."
     qs = urllib.parse.urlencode({
         "pageNo": 0,
         "pageSize": 100,
@@ -2799,6 +2825,69 @@ def whatsapp_numbers_manage():
         whatsapp_access_token_is_set=bool(_wa_access_token() or _gupshup_any_api_ready()),
         whatsapp_graph_version=_wa_graph_version(),
     )
+
+@app.route("/whatsapp/connection", methods=["GET", "POST"])
+@login_required
+def whatsapp_connection_settings():
+    """Safe configuration and read-only template probe for the Gupshup sender.
+
+    Changes provider app metadata only. Never sends WhatsApp messages.
+    """
+    if session.get("username") != MASTER_USERNAME:
+        return render_template("no_permission.html"), 403
+    db = get_db()
+    ensure_whatsapp_schema(db)
+    if request.method == "POST":
+        try:
+            number_id = int(request.form.get("number_id") or 0)
+        except (TypeError, ValueError):
+            number_id = 0
+        found = db.execute("SELECT id, label FROM wa_numbers WHERE id=?", (number_id,)).fetchone()
+        if not found:
+            flash("الرقم المحدد غير موجود.", "danger")
+            return redirect(url_for("whatsapp_connection_settings"))
+        app_id = (request.form.get("gupshup_app_id") or "").strip()
+        app_name = (request.form.get("gupshup_app_name") or "").strip()
+        if (app_id and not re.fullmatch(r"[A-Za-z0-9_-]{6,128}", app_id)) or (
+                app_name and not re.fullmatch(r"[A-Za-z0-9_. -]{2,100}", app_name)):
+            flash("تحقق من App ID واسم التطبيق كما يظهران في إعدادات Gupshup.", "danger")
+            return redirect(url_for("whatsapp_connection_settings"))
+        db.execute("""UPDATE wa_numbers SET gupshup_app_id=?,gupshup_app_name=? WHERE id=?""",
+                   (app_id or None, app_name or None, number_id))
+        db.commit()
+        flash("تم حفظ بيانات التطبيق لهذا الرقم. لم تُرسل رسائل.", "success")
+        return redirect(url_for("whatsapp_connection_settings", check=number_id))
+
+    numbers = db.execute("SELECT * FROM wa_numbers ORDER BY sort_order,id").fetchall()
+    providers = []
+    for n in numbers:
+        branch = n["branch_code"] or ""
+        providers.append({
+            "id": n["id"], "label": n["label"], "branch": branch,
+            "phone": n["phone_number"] or "", "is_active": bool(n["is_active"]),
+            "app_id_saved": n["gupshup_app_id"] or "",
+            "app_name_saved": n["gupshup_app_name"] or "",
+            "app_id_effective": _gupshup_app_id(branch),
+            "app_name_effective": _gupshup_app_name(branch),
+            "has_api_key": bool(_gupshup_api_key(branch)),
+            "has_source": bool(_gupshup_source_number(branch, n["phone_number"])),
+        })
+    checked = None
+    raw_check = request.args.get("check", "").strip()
+    if raw_check:
+        try:
+            check_id = int(raw_check)
+        except (ValueError, TypeError):
+            check_id = 0
+        selected = next((x for x in providers if int(x["id"]) == check_id), None)
+        if selected:
+            templates, err = _gupshup_get_approved_text_templates(selected["branch"])
+            checked = {"number": selected, "error": err,
+                       "count": len(templates),
+                       "templates": templates[:15]}
+    return render_template("whatsapp_connection_settings.html",
+                           providers=providers, checked=checked)
+
 
 # =========================
 # Follow-up Dashboard (Power BI)

@@ -3,7 +3,7 @@
 <div class="page-tiles" style="max-width:1150px;margin:auto">
   <div class="page-titlebar d-flex justify-content-between align-items-center flex-wrap gap-2">
     <div>
-      <h3>ملف العميل الموحد #{{customer.id}} — {{customer.name}}</h3>
+      <h3>تفاصيل ديون العميل — {{customer.name}}</h3>
       <span class="text-muted">رقم الجوال: {{customer.mobile or '-'}} | عدد الديون الظاهرة: {{debts|length}}</span>
     </div>
     <div class="d-flex gap-2 flex-wrap">
@@ -27,18 +27,21 @@
     <div class="col-md-4"><div class="tile-card"><strong>إجمالي المتبقي</strong><div>{{'%.2f'|format(totals.remaining)}} ريال</div></div></div>
   </div>
   <div class="tile-card mb-3">
-    <h5>جميع سجلات ديون العميل — لا تُحذف بالدمج</h5>
+    <h5>الفواتير والديون التفصيلية</h5>
+    <p class="small text-muted">كل دين محفوظ بشكل مستقل مع مبالغ الفواتير والسداد، بما فيها سجلات الفروع المرتبطة بعد الدمج. العرض يخضع لصلاحياتك.</p>
     <div class="table-responsive"><table class="table table-bordered align-middle text-center">
-      <thead><tr><th>رقم الدين</th><th>التاريخ</th><th>الفرع</th><th>الاسم عند تسجيل الفاتورة</th><th>الجوال وقت الفاتورة</th><th>إجمالي الفاتورة</th><th>المسدد</th><th>المتبقي</th><th>الإجراءات</th></tr></thead>
+      <thead><tr><th>رقم الدين</th><th>التاريخ</th><th>الفرع</th><th>الاسم عند تسجيل الفاتورة</th><th>الجوال وقت الفاتورة</th><th>إجمالي الفاتورة</th><th>المسدد</th><th>المتبقي</th><th>آخر إرسال مسجل</th><th>الإجراءات</th></tr></thead>
       <tbody>{% for d in debts %}
         <tr><td>{{d.id}}</td><td>{{d.invoice_date or '-'}}</td><td>{{d.es}}</td>
           <td>{{d.customer_name}}</td><td>{{d.mobile or '-'}}</td>
           <td>{{'%.2f'|format(d.invoice_total or 0)}}</td>
           <td>{{'%.2f'|format(d.paid_amount or 0)}}</td>
           <td>{{'%.2f'|format(d.remaining_amount or 0)}}</td>
+          <td>{{d.last_sent_at or '-'}}</td>
           <td><a href="{{url_for('debt_collection_case',es=d.es,debt_id=d.id)}}" class="btn btn-sm btn-info">المتابعة</a>
-              <a href="{{url_for('accounting_debts_detail',es=d.es,row_id=d.id)}}" class="btn btn-sm btn-outline-primary">الفاتورة</a></td></tr>
-      {% else %}<tr><td colspan="9">لا توجد ديون ضمن صلاحياتك</td></tr>{% endfor %}
+              <a href="{{url_for('accounting_debts_detail',es=d.es,row_id=d.id)}}" class="btn btn-sm btn-outline-primary">تفاصيل الدين</a>
+              <a href="{{url_for('accounting_debts_branch',es=d.es,edit_id=d.id)}}" class="btn btn-sm btn-outline-warning">تعديل</a></td></tr>
+      {% else %}<tr><td colspan="10">لا توجد ديون ضمن صلاحياتك</td></tr>{% endfor %}
       </tbody></table></div>
   </div>
   {% if is_admin and aliases %}
