@@ -2436,7 +2436,7 @@ def whatsapp_send_template(conversation_id):
         f"""
         SELECT c.*, n.label AS number_label, n.branch_code, n.phone_number
         FROM wa_conversations c JOIN wa_numbers n ON n.id=c.wa_number_id
-        WHERE c.id=? AND c.wa_number_id IN ({placeholders})
+        WHERE c.id=? AND c.wa_number_id IN ({placeholders}) AND c.is_deleted=0
         """,
         [conversation_id] + list(reply_ids),
     ).fetchone()
@@ -2505,7 +2505,7 @@ def whatsapp_send_message(conversation_id):
                n.meta_phone_number_id
         FROM wa_conversations c
         JOIN wa_numbers n ON n.id=c.wa_number_id
-        WHERE c.id=? AND c.wa_number_id IN ({placeholders})
+        WHERE c.id=? AND c.wa_number_id IN ({placeholders}) AND c.is_deleted=0
         """,
         [conversation_id] + list(reply_ids),
     ).fetchone()
