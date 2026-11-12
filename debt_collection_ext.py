@@ -2,9 +2,11 @@
 """Debt follow-up extension for Al Eshan; no direct message transmission.
 The main WhatsApp inbox remains responsible for provider-approved sending.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from flask import request, session, redirect, url_for, render_template, flash
 import json
+import uuid
+import hmac
 from urllib.parse import quote
 from debt_customers_ext import ensure_customer_schema, normalized_phone
 
@@ -87,9 +89,140 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
             opened_by TEXT NOT NULL,
             opened_at TEXT NOT NULL DEFAULT (datetime('now'))
         )''')
+        # Keep historical open-attempt rows; migrate their optional confirmation data in place.
+        manual_cols = {c[1] for c in db.execute('PRAGMA table_info(debt_manual_whatsapp_open)').fetchall()}
+        for column, kind in (
+            ('status', "TEXT NOT NULL DEFAULT 'opened'"),
+            ('confirmed_sent_at','TEXT'), ('confirmed_by','TEXT'),
+            ('cancelled_at','TEXT'), ('cancelled_by','TEXT'),
+            ('included_branches','TEXT'),
+        ):
+            if column not in manual_cols:
+                db.execute(f'ALTER TABLE debt_manual_whatsapp_open ADD COLUMN {column} {kind}')
         db.execute('CREATE INDEX IF NOT EXISTS idx_debt_manual_open_customer ON debt_manual_whatsapp_open(customer_id)')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_debt_manual_status ON debt_manual_whatsapp_open(customer_id,status,id)')
         db.execute('CREATE INDEX IF NOT EXISTS idx_debt_followups_debt ON debt_followups(debt_id)')
         db.commit()
+
+
+    def _confirm_token():
+        if not session.get('_debt_send_confirm_token'):
+            session['_debt_send_confirm_token'] = uuid.uuid4().hex
+        return session['_debt_send_confirm_token']
+
+    def _verify_confirm_token():
+        stored = session.get('_debt_send_confirm_token') or ''
+        given = request.form.get('confirm_token') or ''
+        return bool(stored and given and hmac.compare_digest(stored, given))
+
+    def _riyadh_time(raw):
+        if not raw:
+            return '-'
+        try:
+            value = datetime.fromisoformat(str(raw).replace('Z', '+00:00'))
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            value = value.astimezone(timezone(timedelta(hours=3)))
+            return value.strftime('%Y-%m-%d %I:%M %p').replace('AM','ص').replace('PM','م')
+        except (ValueError, TypeError):
+            return str(raw)
+
+    app.add_template_filter(_riyadh_time, 'debt_riyadh')
+
+    @app.context_processor
+    def _manual_debt_send_context():
+        # Only initialize this on debt ledger pages, not every application page.
+        if not session.get('logged_in') or request.endpoint not in ('accounting_debts','accounting_debts_branch'):
+            return {}
+        db = get_db()
+        setup(db)
+        current_user = session.get('username') or ''
+        pending = db.execute("""SELECT customer_id, COUNT(*) AS c
+            FROM debt_manual_whatsapp_open
+            WHERE status='opened' AND opened_by=? GROUP BY customer_id""",
+            (current_user,)).fetchall()
+        latest = db.execute("""SELECT customer_id, MAX(confirmed_sent_at) AS sent_at
+            FROM debt_manual_whatsapp_open WHERE status='staff_confirmed'
+            GROUP BY customer_id""").fetchall()
+        return {
+            'debt_confirm_token': _confirm_token(),
+            'debt_pending_by_customer': {int(x['customer_id']): int(x['c']) for x in pending},
+            'debt_last_confirmed_by_customer': {int(x['customer_id']): _riyadh_time(x['sent_at']) for x in latest},
+        }
+
+    @app.route('/accounting/debts/<es>/confirm-manual/<int:debt_id>', methods=['POST'])
+    def debt_confirm_manual_send(es, debt_id):
+        """Employee attestation; never claims provider-confirmed delivery."""
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        if not _verify_confirm_token():
+            return 'طلب غير صالح، قم بتحديث الصفحة ثم أعد المحاولة.', 400
+        es = (es or '').upper().strip()
+        db = get_db()
+        setup(db)
+        debt = get_case(db, es, debt_id)
+        if debt is None:
+            return render_template('no_permission.html'), 403
+        user = session.get('username') or ''
+        action = request.form.get('action') or 'confirm'
+        if action not in ('confirm', 'not_sent'):
+            return 'إجراء غير صحيح', 400
+        raw_id = request.form.get('attempt_id') or ''
+        if raw_id:
+            try:
+                attempt_id = int(raw_id)
+            except ValueError:
+                return 'رقم سجل غير صالح', 400
+            attempt = db.execute("""SELECT * FROM debt_manual_whatsapp_open
+                WHERE id=? AND customer_id=? AND status='opened'""",
+                (attempt_id, debt['customer_id'])).fetchone()
+        else:
+            # Ledger quick confirm: only the current employee's newest pending attempt.
+            attempt = db.execute("""SELECT * FROM debt_manual_whatsapp_open
+                WHERE customer_id=? AND opened_by=? AND status='opened'
+                ORDER BY id DESC LIMIT 1""",
+                (debt['customer_id'], user)).fetchone()
+        if not attempt:
+            flash('لا توجد محاولة فتح واتساب بانتظار التأكيد لهذا العميل.', 'warning')
+            return redirect(url_for('accounting_debts_branch', es=es))
+        if attempt['opened_by'] != user and not admin():
+            return render_template('no_permission.html'), 403
+        opened_debt = db.execute('SELECT es,customer_id FROM debts_ledger WHERE id=?',
+                                 (attempt['debt_id'],)).fetchone()
+        if not opened_debt or opened_debt['customer_id'] != debt['customer_id'] or not authorized(opened_debt['es']):
+            return render_template('no_permission.html'), 403
+        now_utc = datetime.now(timezone.utc).isoformat(timespec='seconds')
+        if action == 'confirm':
+            with db:
+                changed = db.execute("""UPDATE debt_manual_whatsapp_open
+                    SET status='staff_confirmed',confirmed_sent_at=?,confirmed_by=?
+                    WHERE id=? AND status='opened'""",
+                    (now_utc, user, attempt['id'])).rowcount
+                if changed:
+                    try:
+                        branches = json.loads(attempt['included_branches'] or '[]')
+                    except (ValueError, TypeError):
+                        branches = []
+                    branches = [b for b in branches if b in ('ES1','ES2','ES3') and authorized(b)]
+                    if not branches:
+                        branches = [opened_debt['es']]
+                    placeholders = ','.join('?' for _ in branches)
+                    db.execute(f"""UPDATE debts_ledger SET last_sent_at=?
+                        WHERE customer_id=? AND es IN ({placeholders})""",
+                        [now_utc, debt['customer_id'], *branches])
+            if changed:
+                flash('تم توثيق الإرسال حسب تأكيد الموظف، وليس تأكيد وصول أو قراءة من واتساب.', 'success')
+        else:
+            with db:
+                changed = db.execute("""UPDATE debt_manual_whatsapp_open
+                    SET status='not_sent',cancelled_at=?,cancelled_by=?
+                    WHERE id=? AND status='opened'""",
+                    (now_utc,user,attempt['id'])).rowcount
+            if changed:
+                flash('تم تسجيل فتح المحادثة دون إرسال الرسالة.', 'info')
+        if request.form.get('return_to') == 'case':
+            return redirect(url_for('debt_collection_case', es=es, debt_id=debt_id))
+        return redirect(url_for('accounting_debts_branch', es=es))
 
     def get_case(db, es, debt_id):
         if es not in ('ES1', 'ES2', 'ES3') or not authorized(es):
@@ -239,12 +372,16 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
             return redirect(url_for('accounting_debts_branch', es=es))
 
         message = prepared_for_customer(db, row)
+        accessible = [r['es'] for r in db.execute(
+            'SELECT DISTINCT es FROM debts_ledger WHERE customer_id=? AND remaining_amount>0',
+            (row['customer_id'],)).fetchall() if authorized(r['es'])]
         with db:
             db.execute('''INSERT INTO debt_manual_whatsapp_open
-              (debt_id, customer_id, wa_number_id, destination, message_snapshot, opened_by)
-              VALUES (?,?,?,?,?,?)''',
+              (debt_id, customer_id, wa_number_id, destination, message_snapshot,
+               opened_by, included_branches)
+              VALUES (?,?,?,?,?,?,?)''',
               (debt_id, row['customer_id'], int(sender['id']), phone,
-               message, session.get('username') or ''))
+               message, session.get('username') or '', json.dumps(accessible)))
         return redirect('https://wa.me/' + phone + '?text=' + quote(message, safe=''), code=302)
 
     @app.route('/accounting/debts/<es>/case/<int:debt_id>', methods=['GET', 'POST'])
@@ -359,9 +496,18 @@ def install_debt_collection(app, get_db, ensure_debts, ensure_whatsapp,
         related = db.execute('''SELECT id,es,remaining_amount,invoice_date FROM debts_ledger
           WHERE customer_id=? ORDER BY id DESC''',(row['customer_id'],)).fetchall()
         related = [x for x in related if admin() or bool((session.get('perms') or {}).get('debts_'+str(x['es']).lower()))]
+        manual_attempts = db.execute("""SELECT m.*, n.label AS source_label, d.es AS original_branch
+            FROM debt_manual_whatsapp_open m
+            LEFT JOIN wa_numbers n ON n.id=m.wa_number_id
+            JOIN debts_ledger d ON d.id=m.debt_id
+            WHERE m.customer_id=? ORDER BY m.id DESC LIMIT 100""",
+            (row['customer_id'],)).fetchall()
+        manual_attempts = [x for x in manual_attempts if authorized(x['original_branch'])]
         return render_template('debt_collection_case.html',row=row,es=es,policy=policy,
           settings=settings,followups=followups,opened=opened,messages=messages,
           related=related,related_total=sum(float(x['remaining_amount'] or 0) for x in related),
           prepared_message=prepared_for_customer(db,row),
+          manual_attempts=manual_attempts,
+          debt_confirm_token=_confirm_token(), current_username=session.get('username') or '',
           customer_display_name=canonical['name'] if canonical else row['customer_name'],
           decision=debt_message_decision(row, policy), is_admin=admin())
