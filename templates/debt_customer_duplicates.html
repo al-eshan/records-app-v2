@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-tiles" style="max-width:1100px;margin:auto">
+ <div class="page-titlebar d-flex justify-content-between align-items-center flex-wrap gap-2"><h3>مراجعة العملاء المكررين</h3><a class="btn btn-secondary" href="{{url_for('accounting_debts')}}">دفتر الديون</a></div>
+ <div class="alert alert-info">دمج ملفات العملاء <strong>لا يحذف أي دين أو مبلغ أو تاريخ أو متابعة</strong>؛ بل يربط جميع الديون بعميل واحد ويؤرشف الملف المكرر. بعد الدمج تتوقف المراسلة حتى تعيد الإدارة توثيق موافقة العميل.</div>
+ {% for group in groups %}
+ <div class="tile-card mb-3">
+  <h5>{{group.reason}}</h5>
+  <div class="table-responsive"><table class="table table-bordered align-middle"><thead><tr><th>رقم الملف</th><th>الاسم</th><th>الجوال</th><th>عدد الديون</th><th>الرصيد</th></tr></thead><tbody>
+  {% for c in group.customers %}<tr><td>{{c.id}}</td><td>{{c.name}}</td><td>{{c.mobile or '-'}}</td><td>{{c.count}}</td><td>{{'%.2f'|format(c.balance or 0)}} ريال</td></tr>{% endfor %}
+  </tbody></table></div>
+  <form method="post" class="row g-2" onsubmit="return confirm('تأكيد ربط ملفات العملاء مع بقاء كل الديون والدفعات؟ سيتم تعليق المراسلة حتى المراجعة.');">
+   <div class="col-md-5"><label class="form-label">الملف الأساسي الذي سيبقى</label><select class="form-select" name="target_customer_id" required>{% for c in group.customers %}<option value="{{c.id}}">#{{c.id}} — {{c.name}}</option>{% endfor %}</select></div>
+   <div class="col-md-5"><label class="form-label">الملف المكرر المراد توحيده</label><select class="form-select" name="source_customer_id" required>{% for c in group.customers %}<option value="{{c.id}}" {% if loop.index==2 %}selected{% endif %}>#{{c.id}} — {{c.name}}</option>{% endfor %}</select></div>
+   <div class="col-md-10"><label class="form-label">ملاحظة سبب الدمج</label><input class="form-control" name="note" maxlength="300" placeholder="تمت مطابقة الهوية وتأكيد أن الملفين لنفس العميل"></div>
+   <div class="col-md-10"><label><input type="checkbox" name="confirm_merge" value="yes" required> راجعت السجلين وتأكدت أنهما لنفس العميل، وأفهم أن كل الديون ستظل محفوظة.</label></div>
+   <div class="col-12"><button class="btn btn-primary" type="submit">دمج ملفي العميل بدون حذف الديون</button></div>
+  </form>
+ </div>
+ {% else %}<div class="alert alert-success">لا توجد أسماء أو أرقام متطابقة في الملفات غير المدمجة حاليًا.</div>{% endfor %}
+</div>
+{% endblock %}

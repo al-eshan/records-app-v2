@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-tiles">
+ <div class="page-titlebar d-flex justify-content-between align-items-center flex-wrap gap-2"><h3>بحث العملاء الموحد</h3><div class="d-flex gap-2"><a class="btn btn-secondary" href="{{url_for('accounting_debts')}}">دفتر الديون</a>{% if is_admin %}<a class="btn btn-warning" href="{{url_for('debt_customer_duplicates')}}">مراجعة العملاء المكررين</a>{% endif %}</div></div>
+ <div class="tile-card mb-3"><form method="get" class="row g-2"><div class="col-md-9"><label class="form-label">اسم العميل أو رقم الجوال</label><input name="q" class="form-control" value="{{q}}" placeholder="ابحث في جميع الفروع المصرح لك بها"></div><div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary w-100">بحث</button></div></form></div>
+ <div class="tile-card"><div class="table-responsive"><table class="table table-bordered align-middle"><thead><tr><th>العميل</th><th>الجوال</th><th>الفروع</th><th>الديون</th><th>الرصيد المتبقي</th></tr></thead><tbody>
+ {% for c in customers %}<tr><td>{{c.name}}</td><td>{{c.mobile or '-'}}</td><td>{{c.branches or '-'}}</td><td>{{c.debts}}</td><td>{{'%.2f'|format(c.balance or 0)}} ريال</td></tr>{% else %}<tr><td colspan="5" class="text-center">لا توجد نتائج</td></tr>{% endfor %}
+ </tbody></table></div><p class="small text-muted">يعرض البحث المبالغ الخاصة بالفروع المسموح لك بمشاهدتها فقط. الملفات المتشابهة تاريخيًا لا تُدمج إلا بعد اعتماد الإدارة.</p></div>
+</div>
+{% endblock %}

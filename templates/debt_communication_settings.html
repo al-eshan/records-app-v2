@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-tiles" style="max-width:850px"><div class="page-titlebar"><h3>إعدادات واتساب تحصيل الديون</h3></div>
+<div class="tile-card"><p>تحدد الإدارة رقم واتساب ثابتًا من أرقام المشروع. الحفظ دائم داخل قاعدة البيانات.</p>
+<div class="alert alert-warning">لا يُرسل النظام مطالبة تلقائيًا. يجب التحقق من سياسة مزود واتساب قبل استخدامه لتحصيل الديون، ومراعاة نافذة خدمة العملاء والقوالب المعتمدة.</div>
+<form method="post"><label class="form-label">رقم التحصيل الدائم</label>
+<select class="form-select mb-3" name="wa_number_id"><option value="">— بدون رقم —</option>
+{% for n in numbers %}{% if n.is_active %}<option value="{{n.id}}" {% if settings and settings.wa_number_id == n.id %}selected{% endif %}>{{n.label}} — {{n.phone_number or 'غير محدد'}} ({{n.branch_code or '-'}})</option>{% endif %}{% endfor %}
+</select><button class="btn btn-primary">حفظ الرقم الدائم</button>
+<a class="btn btn-secondary" href="{{url_for('accounting_debts')}}">عودة لدفتر الديون</a></form>
+</div></div>
+{% endblock %}

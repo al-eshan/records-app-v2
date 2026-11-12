@@ -233,6 +233,8 @@ def ensure_debts_ledger_schema(db):
 
     cols = [r[1] for r in db.execute("PRAGMA table_info(debts_ledger)").fetchall()]
 
+    if "invoice_no" not in cols:
+        db.execute("ALTER TABLE debts_ledger ADD COLUMN invoice_no TEXT")
     if "last_sent_at" not in cols:
         db.execute("ALTER TABLE debts_ledger ADD COLUMN last_sent_at TEXT")
     if "es" not in cols:
@@ -2190,10 +2192,16 @@ def whatsapp_branches():
         except ValueError:
             pass
 
+    draft_payload = session.get('_debt_wa_draft') or {}
+    debt_draft_text = ''
+    if active_conversation and draft_payload.get('conversation_id') == active_conversation['id']:
+        debt_draft_text = str(draft_payload.get('text') or '')
+        session.pop('_debt_wa_draft',None)
+
     connected_count = sum(1 for n in numbers if _wa_digits(n["phone_number"]) or (n["meta_phone_number_id"] or "").strip()) if numbers else 0
     total_unread = sum(int(c["unread_count"] or 0) for c in conversations) if conversations else 0
 
-    return render_template(
+    html = render_template(
         "whatsapp_branches.html",
         numbers=numbers,
         conversations=conversations,
@@ -2212,7 +2220,21 @@ def whatsapp_branches():
         reply_number_ids=list(reply_ids),
         approved_templates=approved_templates,
         template_load_error=template_load_error,
+        debt_draft_text=debt_draft_text,
     )
+    # Safely prefill the *existing* WhatsApp composer without replacing its
+    # template or changing any other conversation behaviour.
+    if debt_draft_text:
+        from markupsafe import escape as escape_html
+        marker = 'id="waMessage"'
+        found = html.find(marker)
+        if found >= 0:
+            content_start = html.find('>', found) + 1
+            content_end = html.find('</textarea>', content_start)
+            if content_start > 0 and content_end >= content_start:
+                html = (html[:content_start] + str(escape_html(debt_draft_text))
+                        + html[content_end:])
+    return html
 
 
 @app.route("/whatsapp/new", methods=["POST"])
@@ -4064,16 +4086,29 @@ def normalize_sa_mobile_for_whatsapp(mobile):
     return mobile
 
 
-def build_debt_whatsapp_message(customer_name, remaining_amount):
-    return (
-        f"هذه الرسالة من مؤسسة ال عِشان لقطع غيار السيارات\n"
-        f"عميلنا العزيز {customer_name} يوجد مبلغ مستحق عليكم وقدره {remaining_amount:.2f} ريال، "
-        f"نأمل منكم السداد أو التحويل على حسابنا البنكي في مصرف الراجحي\n"
-        f"رقم الحساب 257000010006080319523\n"
-        f"رقم الآيبان SA8180000257608010319523\n"
-        f"وفي حال التحويل ابلاغنا وارسال الايصال البنكي للمعالجة\n"
-        f"وشكراً لكم على تعاونكم ..."
-    )
+def build_debt_whatsapp_message(customer_name, remaining_amount, breakdown=None):
+    """Prepared draft for a staff-reviewed WhatsApp message; never send automatically."""
+    lines = [
+        "مؤسسة آل عِشان لقطع غيار السيارات",
+        "",
+        f"عميلنا العزيز {customer_name}،",
+        f"نود إشعاركم بوجود مبلغ مستحق عليكم قدره {remaining_amount:.2f} ريال.",
+    ]
+    if breakdown and len(breakdown) > 1:
+        lines += ["", "تفاصيل المبالغ حسب الفروع:"]
+        for code, amount in breakdown:
+            lines.append(f"{code}: {amount:.2f} ريال")
+    lines += [
+        "",
+        "نأمل منكم السداد أو التحويل على حسابنا البنكي في مصرف الراجحي.",
+        "رقم الحساب: 257000010006080319523",
+        "رقم الآيبان: SA8180000257608010319523",
+        "وفي حال التحويل، نرجو إبلاغنا وتزويدنا بإشعار السداد لتحديث حسابكم.",
+        "",
+        "شاكرين لكم حسن تعاونكم.",
+        "مؤسسة آل عِشان لقطع غيار السيارات",
+    ]
+    return "\n".join(lines)
 
 
 def has_debt_permission(es):
@@ -4097,43 +4132,9 @@ def has_debt_permission(es):
 
 @app.route("/accounting/debts/<es>/whatsapp/<int:row_id>")
 @login_required
-def accounting_debts_whatsapp(es, row_id):
-    db = get_db()
-    ensure_debts_ledger_schema(db)
-
-    es = (es or "").strip().upper()
-    if es not in ["ALL", "ES1", "ES2", "ES3"]:
-        flash("الفرع غير صحيح", "danger")
-        return redirect(url_for("accounting_home"))
-
-    row = db.execute("""
-        SELECT *
-        FROM debts_ledger
-        WHERE id = ?
-    """, (row_id,)).fetchone()
-
-    if not row:
-        flash("السجل غير موجود", "danger")
-        return redirect(url_for("accounting_debts"))
-
-    row_es = row["es"]
-
-    if not has_debt_permission(row_es):
-        flash("ليس لديك صلاحية للوصول إلى هذه الصفحة", "danger")
-        return redirect(url_for("home"))
-
-    phone = normalize_sa_mobile_for_whatsapp(row["mobile"])
-    if not phone:
-        flash("رقم جوال العميل غير موجود", "danger")
-        return redirect(url_for("accounting_debts"))
-
-    msg = build_debt_whatsapp_message(
-        row["customer_name"],
-        float(row["remaining_amount"] or 0)
-    )
-
-    whatsapp_url = f"https://wa.me/{phone}?text={quote(msg)}"
-    return redirect(whatsapp_url)
+def accounting_debts_whatsapp(es,row_id):
+    # Redirect legacy direct WhatsApp link to opt-in debt collection case.
+    return redirect(url_for("debt_collection_case",es=es,debt_id=row_id))
 
 
 @app.route("/accounting/debts/<es>", methods=["GET", "POST"])
@@ -4151,6 +4152,7 @@ def accounting_debts_branch(es):
         flash("ليس لديك صلاحية للوصول إلى هذه الصفحة", "danger")
         return redirect(url_for("home"))
 
+    DEBT_CUSTOMERS['setup']()  # safe lazy migration, never merges existing debts automatically
     action = (request.form.get("action") or "").strip()
 
     if request.method == "POST":
@@ -4174,48 +4176,119 @@ def accounting_debts_branch(es):
         if action == "add":
             if not customer_name:
                 flash("اسم العميل مطلوب", "danger")
+            elif not (invoice_total > 0 and 0 <= paid_amount <= invoice_total):
+                flash("تحقق من مبلغ الفاتورة والمبلغ المسدد", "danger")
             else:
-                existing = db.execute("""
-                    SELECT id, customer_name, mobile, es
-                    FROM debts_ledger
-                    WHERE es = ?
-                      AND (
-                            lower(customer_name) = lower(?)
-                            OR (mobile != '' AND mobile = ?)
-                      )
-                    LIMIT 1
-                """, (
-                    branch_es,
-                    customer_name,
-                    mobile
-                )).fetchone()
-
-                if existing:
-                    flash(
-                        f"تنبيه: العميل قد يكون موجود مسبقًا في {existing['es']} باسم: {existing['customer_name']} ورقم: {existing['mobile'] or '-'}",
-                        "warning"
-                    )
-                else:
-                    db.execute("""
-                        INSERT INTO debts_ledger (
-                            es, invoice_no, invoice_date, customer_name, mobile, address,
-                            invoice_total, paid_amount, remaining_amount
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        branch_es, "", invoice_date, customer_name, mobile, address,
-                        invoice_total, paid_amount, remaining_amount
-                    ))
-                    db.commit()
-                    flash("تمت إضافة العميل بنجاح", "success")
+                # Search across *all* branches; require a decision before saving.
+                DEBT_CUSTOMERS['setup']()
+                choices = DEBT_CUSTOMERS['display_matches'](db,customer_name,mobile)
+                # Guard against double-booking the *same debt*, not just duplicate names.
+                exact_duplicates = []
+                for old in db.execute('''SELECT id,invoice_date,customer_name,mobile,invoice_total,paid_amount
+                    FROM debts_ledger WHERE es=? AND ABS(COALESCE(invoice_total,0)-?) < 0.005
+                    AND ABS(COALESCE(paid_amount,0)-?) < 0.005''',
+                    (branch_es,invoice_total,paid_amount)).fetchall():
+                    if (old['invoice_date'] or '') != invoice_date:
+                        continue
+                    if ((normalized_phone(old['mobile']) and normalized_phone(old['mobile']) == normalized_phone(mobile))
+                        or normalized_name(old['customer_name']) == normalized_name(customer_name)):
+                        exact_duplicates.append(old)
+                linked_id = (request.form.get('linked_customer_id') or '').strip()
+                force_new = request.form.get('force_new_customer') == 'yes'
+                reason = (request.form.get('override_reason') or '').strip()
+                selected = None
+                invoice_repeat_ok = (session.get('username') == MASTER_USERNAME
+                   and request.form.get('repeat_invoice_approved') == 'yes'
+                   and len(reason) >= 8)
+                if exact_duplicates and not invoice_repeat_ok:
+                    return render_template('debt_duplicate_review.html',
+                      matches=choices, exact_duplicates=exact_duplicates,
+                      form_data=dict(request.form), es=es,
+                      is_admin=session.get('username') == MASTER_USERNAME)
+                if linked_id:
+                    try:
+                        chosen_id = int(linked_id)
+                    except ValueError:
+                        chosen_id = -1
+                    if chosen_id in [c['id'] for c in choices]:
+                        selected = db.execute('''SELECT * FROM debt_customers
+                          WHERE id=? AND merged_into_customer_id IS NULL''',(chosen_id,)).fetchone()
+                    if not selected:
+                        flash('اختيار العميل الموجود غير صالح. راجع نتائج البحث مجددًا.','danger')
+                        return redirect(url_for('accounting_debts_branch',es=es))
+                    # Identity protection: do not reuse WhatsApp consent for a different mobile.
+                    old_phone = normalized_phone(selected['mobile'])
+                    new_phone = normalized_phone(mobile)
+                    if old_phone and new_phone and old_phone != new_phone:
+                        flash('جوال العميل مختلف عن الملف الموجود؛ لا يمكن الربط قبل تصحيح البيانات من الإدارة.','danger')
+                        return redirect(url_for('accounting_debts_branch',es=es))
+                    name_on_file = normalized_name(selected['name'])
+                    new_name = normalized_name(customer_name)
+                    if (session.get('username') != MASTER_USERNAME and name_on_file != new_name
+                        and name_on_file not in new_name and new_name not in name_on_file):
+                        flash('هذا الجوال مرتبط باسم مختلف؛ يلزم مراجعة الإدارة قبل ربط الملفين.','danger')
+                        return redirect(url_for('accounting_debts_branch',es=es))
+                    if not mobile and selected['mobile']:
+                        mobile = selected['mobile']
+                    if not address and selected['address']:
+                        address = selected['address']
+                elif choices and not force_new:
+                    return render_template('debt_duplicate_review.html',
+                      matches=choices, form_data=dict(request.form), es=es,
+                      is_admin=session.get('username')==MASTER_USERNAME)
+                elif choices and force_new and (session.get('username')!=MASTER_USERNAME or len(reason)<8):
+                    flash('إنشاء عميل منفصل رغم وجود تشابه يحتاج موافقة الإدارة وسببًا من 8 أحرف على الأقل.','danger')
+                    return render_template('debt_duplicate_review.html',
+                      matches=choices, form_data=dict(request.form), es=es,
+                      is_admin=session.get('username')==MASTER_USERNAME)
+                with db:
+                    if selected:
+                        customer_id = int(selected['id'])
+                        if not normalized_phone(selected['mobile']) and normalized_phone(mobile):
+                            db.execute('''UPDATE debt_customers SET mobile=?,normalized_phone=?,
+                              updated_at=datetime('now') WHERE id=?''',
+                              (mobile,normalized_phone(mobile),customer_id))
+                            # A newly assigned phone is not covered by prior consent.
+                            db.execute('''UPDATE debt_customer_policy SET policy='pending',
+                              consent_at=NULL,consent_source=NULL,updated_at=datetime('now')
+                              WHERE customer_id=?''',(customer_id,))
+                    else:
+                        customer_id = DEBT_CUSTOMERS['create_customer'](db,customer_name,mobile,address)
+                        if choices and force_new:
+                            db.execute('''INSERT INTO debt_customer_override_audit
+                              (new_customer_id,reason,performed_by) VALUES (?,?,?)''',
+                              (customer_id,reason[:500],session.get('username') or ''))
+                    cursor = db.execute('''INSERT INTO debts_ledger
+                      (es,invoice_no,invoice_date,customer_name,mobile,address,
+                       invoice_total,paid_amount,remaining_amount,customer_id)
+                      VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                      (branch_es,'',invoice_date,customer_name,mobile,address,
+                       invoice_total,paid_amount,remaining_amount,customer_id))
+                    if exact_duplicates:
+                        db.execute('''INSERT INTO debt_duplicate_invoice_override_audit
+                          (debt_id,similar_debt_id,reason,performed_by)
+                          VALUES (?,?,?,?)''',
+                          (cursor.lastrowid,exact_duplicates[0]['id'],reason[:500],session.get('username') or ''))
+                flash('تم حفظ الدين ' + ('ضمن ملف العميل الموجود.' if selected else 'وإنشاء ملف العميل.'),'success')
 
         elif action == "update":
             row_id = (request.form.get("id") or "").strip()
+            original = db.execute("SELECT es,mobile,customer_id FROM debts_ledger WHERE id=?",(row_id,)).fetchone() if row_id else None
+            if not original or not has_debt_permission(original["es"]):
+                return render_template("no_permission.html"), 403
 
             if not row_id:
                 flash("معرّف السجل غير موجود", "danger")
             elif not customer_name:
                 flash("اسم العميل مطلوب", "danger")
+            elif db.execute("""SELECT COUNT(*) FROM debts_ledger
+                     WHERE customer_id=(SELECT customer_id FROM debts_ledger WHERE id=?)""",
+                    (row_id,)).fetchone()[0] > 1 and (
+                    normalized_name(customer_name) != normalized_name(db.execute(
+                    'SELECT customer_name FROM debts_ledger WHERE id=?',(row_id,)).fetchone()[0]) or
+                    normalized_phone(mobile) != normalized_phone(db.execute(
+                    'SELECT mobile FROM debts_ledger WHERE id=?',(row_id,)).fetchone()[0])):
+                flash("هذا العميل مرتبط بديون أخرى؛ لا يمكن تغيير الاسم أو الجوال من فاتورة واحدة. راجع الإدارة.", "danger")
             else:
                 db.execute("""
                     UPDATE debts_ledger
@@ -4240,32 +4313,36 @@ def accounting_debts_branch(es):
                     remaining_amount,
                     row_id
                 ))
+                if original and normalized_phone(original['mobile']) != normalized_phone(mobile):
+                    # A consent given to one mobile must never transfer to another.
+                    db.execute("""UPDATE debt_customer_policy SET policy='pending',
+                      consent_at=NULL,consent_source=NULL,updated_at=datetime('now')
+                      WHERE customer_id=?""",(original['customer_id'],))
+                cust = db.execute("SELECT customer_id FROM debts_ledger WHERE id=?",(row_id,)).fetchone()
+                if cust and cust['customer_id']:
+                    db.execute("""UPDATE debt_customers
+                       SET name=?,normalized_name=?,mobile=?,normalized_phone=?,address=?,updated_at=datetime('now')
+                       WHERE id=? AND (SELECT COUNT(*) FROM debts_ledger WHERE customer_id=?)=1""",
+                       (customer_name,normalized_name(customer_name),mobile,normalized_phone(mobile),address,
+                        cust['customer_id'],cust['customer_id']))
                 db.commit()
                 flash("تم تعديل السجل", "success")
 
         elif action == "mark_sent":
-            row_id = (request.form.get("id") or "").strip()
-
-            if row_id:
-                db.execute("""
-                    UPDATE debts_ledger
-                    SET last_sent_at = datetime('now'),
-                        updated_at = datetime('now')
-                    WHERE id = ?
-                """, (row_id,))
-                db.commit()
-                flash("تم تسجيل تاريخ الإرسال", "success")
+            flash("تم إلغاء تأكيد الإرسال اليدوي. راجع سجل واتساب الفعلي في ملف التحصيل.","warning")
 
         elif action == "delete":
             row_id = (request.form.get("id") or "").strip()
+            if session.get("username") != MASTER_USERNAME:
+                return render_template("no_permission.html"), 403
 
             if row_id:
                 db.execute("""
                     DELETE FROM debts_ledger
-                    WHERE id = ?
-                """, (row_id,))
+                    WHERE id = ? AND es = ?
+                """, (row_id, branch_es))
                 db.commit()
-                flash("تم حذف السجل", "warning")
+                flash("تم حذف سجل الدين فقط. لم يتم حذف ملف العميل أو سجلات ديونه الأخرى.", "warning")
 
         if es == "ALL":
             return redirect(url_for("accounting_debts"))
@@ -4318,6 +4395,8 @@ def accounting_debts_branch(es):
                 ORDER BY id DESC
             """, (es,)).fetchall()
 
+    rows = [r for r in rows if has_debt_permission(r["es"])]
+
     total_invoice = sum((r["invoice_total"] or 0) for r in rows)
     total_paid = sum((r["paid_amount"] or 0) for r in rows)
     total_remaining = sum((r["remaining_amount"] or 0) for r in rows)
@@ -4331,6 +4410,8 @@ def accounting_debts_branch(es):
             FROM debts_ledger
             WHERE id = ?
         """, (edit_id,)).fetchone()
+        if edit_row and not has_debt_permission(edit_row["es"]):
+            return render_template("no_permission.html"), 403
 
     return render_template(
         "accounting_debts_branch.html",
@@ -5786,6 +5867,18 @@ def permissions_page():
         labels=PERM_LABELS,
         master=MASTER_USERNAME,
     )
+
+
+# Debt collection followups and fixed WhatsApp sender.
+from debt_collection_ext import install_debt_collection
+install_debt_collection(app,get_db,ensure_debts_ledger_schema,
+                        ensure_whatsapp_schema,_wa_allowed_number_ids,
+                        _wa_normalize_destination,build_debt_whatsapp_message)
+
+# Shared, non-destructive customer directory (all debts remain independent).
+from debt_customers_ext import install_customer_directory, normalized_name, normalized_phone, customer_matches
+DEBT_CUSTOMERS = install_customer_directory(app, get_db, ensure_debts_ledger_schema,
+                                            has_debt_permission, MASTER_USERNAME)
 
 
 # =========================

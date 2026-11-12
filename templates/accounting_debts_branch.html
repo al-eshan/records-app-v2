@@ -9,6 +9,11 @@
     </div>
 
     <div class="d-flex gap-2">
+<a href="{{url_for('debt_customer_index')}}" class="btn btn-outline-primary">🔎 بحث العملاء الموحد</a>
+{% if session.get('username') == 'adm-es' %}
+<a href="{{url_for('debt_customer_duplicates')}}" class="btn btn-outline-warning">مراجعة العملاء المكررين</a>
+<a href="{{url_for('debt_communication_settings')}}" class="btn btn-warning">⚙️ رقم واتساب التحصيل</a>
+{% endif %}
 <a href="{{ url_for('accounting_debts_export', es=es) }}" class="btn btn-success">
   تصدير Excel
 </a>
@@ -65,6 +70,14 @@
                value="{{ edit_row.mobile if edit_row else '' }}">
       </div>
 
+      {% if not edit_row %}
+      <div class="col-12">
+        <div id="debt-customer-matches" class="alert alert-light border mb-0" aria-live="polite">
+          <span class="text-muted">أدخل الاسم أو الجوال؛ سيبحث البرنامج عن العميل في الفروع الثلاثة قبل الإضافة.</span>
+        </div>
+      </div>
+      {% endif %}
+
       <div class="col-12 col-md-8">
         <label class="form-label">العنوان</label>
         <input type="text" name="address" class="form-control"
@@ -99,11 +112,7 @@
             إلغاء
           </a>
 
-          <form method="post" onsubmit="return confirm('هل أنت متأكد من حذف هذا السجل؟');">
-            <input type="hidden" name="action" value="delete">
-            <input type="hidden" name="id" value="{{ edit_row.id }}">
-            <button type="submit" class="btn btn-danger">حذف</button>
-          </form>
+
         {% endif %}
       </div>
     </form>
@@ -197,19 +206,8 @@
               <td>{{ row.last_sent_at or "-" }}</td>
               <td>
                 <div class="d-flex justify-content-center gap-1 flex-wrap">
-<a href="{{ url_for('accounting_debts_whatsapp', es=row.es, row_id=row.id) }}"
-   target="_blank"
-   class="btn btn-sm btn-success">
-  إرسال رسالة
-</a>
-
-                  <form method="post" style="display:inline;">
-                    <input type="hidden" name="action" value="mark_sent">
-                    <input type="hidden" name="id" value="{{ row.id }}">
-                    <button type="submit" class="btn btn-sm btn-primary">
-                      تم الإرسال
-                    </button>
-                  </form>
+<a href="{{url_for('debt_collection_case',es=row.es,debt_id=row.id)}}" class="btn btn-sm btn-success" title="يعرض الموافقة أولًا، ثم يفتح واتساب المشروع بالرقم الثابت">💬 إرسال رسالة</a>
+                  <a href="{{url_for('debt_collection_case',es=row.es,debt_id=row.id)}}" class="btn btn-sm btn-outline-info">سجل المراسلات والمتابعة</a>
 
                   <a href="{{ url_for('accounting_debts_detail', es=row.es, row_id=row.id) }}"
                      class="btn btn-sm btn-info">
@@ -221,14 +219,17 @@
                     تعديل
                   </a>
 
+                  {% if session.get('username') == 'adm-es' %}
                   <form method="post" style="display:inline;"
-                        onsubmit="return confirm('هل أنت متأكد من حذف هذا السجل؟');">
+                        onsubmit="return confirm('هذا حذف لسجل دين فعلي، وليس دمج عميل. هل تريد حذف الدين نهائيًا؟');">
                     <input type="hidden" name="action" value="delete">
                     <input type="hidden" name="id" value="{{ row.id }}">
+                    <input type="hidden" name="branch_es" value="{{ row.es }}">
                     <button type="submit" class="btn btn-sm btn-danger">
                       حذف
                     </button>
                   </form>
+                  {% endif %}
                 </div>
               </td>
             </tr>
@@ -260,6 +261,45 @@ document.addEventListener("DOMContentLoaded", function () {
   if (paidInput) paidInput.addEventListener("input", calcRemaining);
 
   calcRemaining();
+
+  const nameInput = document.querySelector('input[name="customer_name"]');
+  const mobileInput = document.querySelector('input[name="mobile"]');
+  const output = document.getElementById('debt-customer-matches');
+  let timer = null;
+  let requestNo = 0;
+  function safe(text) {
+    return String(text ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  }
+  function lookup() {
+    if (!output) return;
+    const name = (nameInput?.value || '').trim();
+    const mobile = (mobileInput?.value || '').trim();
+    const seq = ++requestNo;
+    if (name.length < 3 && mobile.length < 5) {
+      output.innerHTML = '<span class="text-muted">اكتب 3 أحرف من الاسم أو 5 أرقام من الجوال لكشف العملاء المكررين.</span>';
+      return;
+    }
+    output.textContent = 'جارٍ البحث عن العميل في الفروع...';
+    fetch('{{url_for("debt_customer_lookup")}}?name=' + encodeURIComponent(name) + '&mobile=' + encodeURIComponent(mobile),
+      {credentials:'same-origin'})
+      .then(r => {if (!r.ok) throw new Error('lookup'); return r.json();})
+      .then(data => {
+        if(seq !== requestNo) return;
+        const items = data.matches || [];
+        if (!items.length) {
+          output.innerHTML='<span class="text-success">لم يظهر تطابق حاليًا. سيعيد النظام التحقق عند الحفظ.</span>';
+          return;
+        }
+        output.innerHTML='<strong class="text-warning">⚠️ قد يكون العميل مسجلًا مسبقًا. عند الحفظ ستظهر خيارات الربط قبل أي إضافة.</strong>' +
+          items.slice(0,6).map(x=>'<div class="small border-top py-1">' + safe(x.name) +
+          ' · ' + safe(x.mobile || 'لا يوجد جوال') + ' · ' + safe((x.branches||[]).join('، ') || 'فرع آخر') +
+          ' · ' + safe(({phone:'نفس الجوال',name:'نفس الاسم',similar:'اسم مشابه'})[x.kind] || x.kind) + '</div>').join('');
+      }).catch(() => {if(seq===requestNo) output.textContent='تعذر البحث المبكر؛ سيتحقق البرنامج مرة أخرى عند الحفظ.';});
+  }
+  [nameInput,mobileInput].forEach(input=>input?.addEventListener('input',()=>{
+    clearTimeout(timer);timer=setTimeout(lookup,320);
+  }));
+  if (output) lookup();
 });
 </script>
 

@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-tiles" style="max-width:1150px">
+<div class="page-titlebar d-flex justify-content-between align-items-center flex-wrap gap-2"><h3>متابعة تحصيل العميل — {{row.customer_name}}</h3><a class="btn btn-secondary" href="{{url_for('accounting_debts_branch',es=es)}}">رجوع</a></div>
+<div class="tile-card mb-3"><h5>الرصيد المتبقي: {{'%.2f'|format(row.remaining_amount or 0)}} ريال — {{es}}</h5>
+<p>رقم التحصيل الدائم: <strong>{{settings.label if settings and settings.label else 'غير محدد'}}</strong> {{settings.phone_number if settings and settings.phone_number else ''}}</p>
+<p>سياسة التواصل: <strong>{{{'pending':'لم تحدد الإدارة','allow':'مسموح بالمراسلة','call':'اتصال فقط','internal':'متابعة داخلية','paused':'مؤجل','blocked':'ممنوع التواصل'}.get(policy.policy if policy else 'pending','غير محدد')}}</strong>{% if policy and policy.dispute %} — <span class="text-danger">المديونية محل اعتراض: المراسلة متوقفة</span>{% endif %}</p>
+{% if is_admin %}<form method="post" class="row g-2"><input type="hidden" name="action" value="policy">
+<div class="col-md-4"><label class="form-label">قرار الإدارة</label><select class="form-select" name="policy">{% for value,label in [('pending','لم تحدد السياسة'),('allow','مسموح بالمراسلة'),('call','اتصال فقط'),('internal','متابعة داخلية'),('paused','مؤجل'),('blocked','ممنوع التواصل')] %}<option value="{{value}}" {% if policy and policy.policy==value %}selected{% endif %}>{{label}}</option>{% endfor %}</select></div>
+<div class="col-md-4"><label class="form-label">مصدر موافقة العميل</label><input class="form-control" name="consent_source" value="{{policy.consent_source if policy else ''}}"></div>
+<div class="col-md-4"><label class="form-label">تأجيل حتى</label><input class="form-control" type="date" name="pause_until" value="{{policy.pause_until if policy else ''}}"></div>
+<div class="col-12"><label><input type="checkbox" name="consent_confirmed" {% if policy and policy.consent_at %}checked{% endif %}> لدي موافقة موثقة من العميل على مراسلته عبر واتساب</label></div>
+<div class="col-12"><textarea class="form-control" name="note" placeholder="ملاحظة الإدارة">{{policy.note if policy else ''}}</textarea></div>
+<div class="col-12"><button class="btn btn-primary">حفظ سياسة التواصل</button> <a class="btn btn-outline-secondary" href="{{url_for('debt_communication_settings')}}">اختيار رقم الإرسال الدائم</a></div></form>
+{% if policy and policy.dispute %}<form method="post" class="mt-2" onsubmit="return confirm('هل راجعت الإدارة الاعتراض؟')"><input type="hidden" name="action" value="resolve_dispute"><button class="btn btn-outline-warning btn-sm">رفع تعليق الاعتراض</button></form>{% endif %}
+{% else %}<p class="small text-muted">لا يستطيع تعديل السياسة إلا المستخدم الرئيسي adm-es.</p>{% endif %}
+</div>
+<div class="tile-card mb-3"><h5>ديون العميل المرتبطة — الفروع المصرح لك بها</h5>
+<div class="table-responsive"><table class="table table-bordered"><thead><tr><th>الفرع</th><th>تاريخ الدين</th><th>المبلغ المتبقي</th></tr></thead><tbody>{% for debt in related %}<tr><td>{{debt.es}}</td><td>{{debt.invoice_date or '-'}}</td><td>{{'%.2f'|format(debt.remaining_amount or 0)}} ريال</td></tr>{% endfor %}</tbody></table></div>
+<p class="small text-muted">مجموع الديون الظاهرة لك فقط: {{'%.2f'|format(related_total)}} ريال. جميع الديون محفوظة كعمليات مستقلة.</p>
+</div>
+<div class="tile-card mb-3"><h5>إرسال رسالة من واتساب المشروع</h5><p class="text-muted">يفتح رقم الإرسال الذي حفظته الإدارة، دون إرسال تلقائي أو تغيير إعدادات الأرقام الحالية.</p>
+{% if policy and policy.policy=='allow' and policy.consent_at and not policy.dispute and (row.remaining_amount or 0)>0 %}
+<label class="form-label mt-2">معاينة مسودة الرسالة المعتمدة</label>
+<textarea id="debtMessageDraft" class="form-control mb-2" rows="11" readonly>{{ prepared_message }}</textarea>
+<button type="button" class="btn btn-outline-info btn-sm mb-3" onclick="navigator.clipboard.writeText(document.getElementById('debtMessageDraft').value)">نسخ نص الرسالة</button>
+{% else %}<div class="alert alert-warning">سيظهر نص المطالبة وخيار الإرسال بعد أن توثق الإدارة موافقة العميل وتسمح بالمراسلة، مع عدم وجود اعتراض قائم.</div>{% endif %}
+<form method="post"><input type="hidden" name="action" value="open_chat"><button class="btn btn-success" {% if not policy or policy.policy!='allow' or not policy.consent_at or policy.dispute or not settings or not settings.id or (row.remaining_amount or 0)<=0 %}disabled{% endif %}>فتح المحادثة برقم التحصيل المعتمد</button></form>
+<div class="small text-warning mt-2">فتح المحادثة لا يعني أن إرسال مطالبات الديون مسموح في سياسة واتساب. يلزم تأكيد أهلية الاستخدام قبل الإرسال.</div></div>
+<div class="tile-card mb-3"><h5>إضافة متابعة</h5><form method="post" class="row g-2"><input type="hidden" name="action" value="followup">
+<div class="col-md-4"><label class="form-label">نوع الإجراء</label><select class="form-select" name="action_type"><option value="note">ملاحظة</option><option value="call">اتصال</option><option value="visit">زيارة</option><option value="promise">وعد بالسداد</option><option value="dispute">اعتراض على المديونية (إيقاف المراسلة)</option></select></div>
+<div class="col-md-4"><label class="form-label">تاريخ المتابعة القادمة</label><input type="date" name="followup_date" class="form-control"></div>
+<div class="col-md-4"><label class="form-label">مبلغ الوعد بالسداد</label><input type="number" min="0" step=".01" name="promised_amount" class="form-control"></div>
+<div class="col-12"><label class="form-label">النتيجة والملاحظات</label><textarea class="form-control" name="note" required></textarea></div>
+<div class="col-12"><button class="btn btn-primary">حفظ المتابعة</button></div></form></div>
+<div class="tile-card mb-3"><h5>سجل المتابعات</h5><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>التاريخ</th><th>النوع</th><th>الملاحظات</th><th>المتابعة القادمة</th><th>الموظف</th></tr></thead><tbody>
+{% for item in followups %}<tr><td>{{item.created_at}}</td><td>{{item.action_type}}</td><td>{{item.note}}</td><td>{{item.followup_date or '-'}}</td><td>{{item.performed_by}}</td></tr>{% else %}<tr><td colspan="5">لا توجد متابعات</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="tile-card mb-3"><h5>الرسائل المسجلة في واتساب المشروع</h5><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>التاريخ</th><th>الاتجاه</th><th>الحالة</th><th>الموظف</th><th>نص الرسالة</th></tr></thead><tbody>
+{% for m in messages %}<tr><td>{{m.sent_at}}</td><td>{{'صادر' if m.direction=='out' else 'وارد'}}</td><td>{{m.status or '-'}}</td><td>{{m.sent_by_username or '-'}}</td><td>{{(m.body or '')[:200]}}</td></tr>{% else %}<tr><td colspan="5">لا توجد رسائل مسجلة من الرقم المخصص</td></tr>{% endfor %}</tbody></table></div>
+{% if row.last_sent_at %}<p class="small">آخر إرسال مسجل يدويًا بالنظام السابق: {{row.last_sent_at}} (غير مؤكد من المزود)</p>{% endif %}
+<h6>سجل فتح المحادثات (لا يثبت الإرسال)</h6><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>تاريخ الفتح</th><th>الموظف</th><th>الرقم</th></tr></thead><tbody>
+{% for o in opened %}<tr><td>{{o.opened_at}}</td><td>{{o.opened_by}}</td><td>{{o.label or o.wa_number_id}}</td></tr>{% else %}<tr><td colspan="3">لا توجد عمليات فتح</td></tr>{% endfor %}</tbody></table></div>
+</div></div>
+{% endblock %}

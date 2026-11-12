@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-tiles" style="max-width:1100px;margin:auto">
+ <div class="page-titlebar"><h3>⚠️ تأكيد العميل قبل إضافة الدين</h3></div>
+ <div class="alert alert-warning"><strong>لم يُحفظ الدين بعد.</strong> عُثر على عملاء مطابقين أو مشابهين في دفتر الديون. اختر العميل الصحيح للربط به، أو اطلب من الإدارة الموافقة على إنشاء عميل مختلف. <strong>لا تُحذف أي مديونية أو دفعة عند الربط.</strong></div>
+ {% if exact_duplicates %}
+ <div class="alert alert-danger"><strong>قد تكون هذه نفس الفاتورة مضافة مسبقًا!</strong> تطابق الفرع والتاريخ والمبلغ وبيانات العميل مع دين مسجل.
+ {% for d in exact_duplicates %}<div>دين رقم #{{d.id}} — {{d.customer_name}} — {{d.invoice_date or 'بدون تاريخ'}} — {{'%.2f'|format(d.invoice_total or 0)}} ريال</div>{% endfor %}
+ <strong>إذا كنت تعيد إدخال نفس الدين بالخطأ، اضغط «إلغاء» ولا تحفظ مرة ثانية.</strong></div>
+ {% endif %}
+ <div class="tile-card mb-3">
+  <h5>البيانات التي أدخلتها</h5>
+  <div>الاسم: <strong>{{form_data.get('customer_name','')}}</strong> | الجوال: <strong>{{form_data.get('mobile','') or '-'}}</strong> | الفرع: <strong>{{form_data.get('branch_es',es)}}</strong> | المبلغ: <strong>{{form_data.get('invoice_total','0')}}</strong> ريال</div>
+ </div>
+ {% for match in matches %}
+ <div class="tile-card mb-3">
+   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+     <h5 class="mb-1">{{match.name}}</h5>
+     <div class="small text-muted">الجوال: {{match.mobile or 'غير مسجل'}} | مطابقة: {{ {'phone':'نفس رقم الجوال','name':'نفس الاسم','similar':'اسم مشابه'}.get(match.kind,match.kind)}}</div>
+     <div class="small">الفروع المسموحة لك: {{match.branches|join('، ') or 'لا توجد تفاصيل متاحة'}} {% if match.other_branch %} | يوجد سجل في فرع آخر (تفاصيله محجوبة){% endif %}</div>
+     <div class="small">عدد الديون الظاهرة: {{match.debt_count}} | الرصيد الظاهر: {{'%.2f'|format(match.amount)}} ريال</div>
+    </div>
+    <form method="post" action="{{url_for('accounting_debts_branch',es=es)}}">
+     {% for key,value in form_data.items() %}{% if key not in ('linked_customer_id','force_new_customer','override_reason') %}
+       <input type="hidden" name="{{key}}" value="{{value}}">
+     {% endif %}{% endfor %}
+     <input type="hidden" name="linked_customer_id" value="{{match.id}}">
+     {% if not exact_duplicates %}<button type="submit" class="btn btn-success">ربط دين جديد بهذا العميل</button>
+     {% else %}<span class="small text-danger">التسجيل موقوف لاحتمال تكرار نفس الفاتورة</span>{% endif %}
+    </form>
+   </div>
+ </div>
+ {% endfor %}
+ {% if exact_duplicates and is_admin %}
+ <div class="tile-card mb-3">
+   <h5>اعتماد فاتورة مستقلة لها نفس البيانات — للإدارة فقط</h5>
+   <p class="small text-muted">هذا الاستثناء يسمح بدين ثانٍ ويؤثر على مجموع مستحقات العميل. استخدمه فقط بعد التأكد أنهما عمليتان مختلفتان فعليًا.</p>
+   <form method="post" action="{{url_for('accounting_debts_branch',es=es)}}">
+    {% for key,value in form_data.items() %}{% if key not in ('linked_customer_id','force_new_customer','override_reason','repeat_invoice_approved') %}<input type="hidden" name="{{key}}" value="{{value}}">{% endif %}{% endfor %}
+    <input type="hidden" name="repeat_invoice_approved" value="yes">
+    <label class="form-label">إضافة الدين إلى ملف العميل الموجود</label>
+    <select name="linked_customer_id" class="form-select mb-2" required>{% for m in matches %}<option value="{{m.id}}">#{{m.id}} — {{m.name}}</option>{% endfor %}</select>
+    <input name="override_reason" class="form-control mb-2" minlength="8" maxlength="500" placeholder="سبب وجود فاتورتين منفصلتين بنفس التفاصيل" required>
+    <button type="submit" class="btn btn-outline-danger">اعتماد تسجيل دين ثانٍ</button>
+   </form>
+ </div>
+ {% elif is_admin %}
+ <div class="tile-card mb-3">
+  <h5>العميل شخص مختلف بالفعل؟</h5>
+  <p class="text-muted small">لن يتم تجاوز التشابه دون توثيق السبب. الاسم أو الجوال المتطابق وحده لا يؤكد هوية الشخص.</p>
+  <form method="post" action="{{url_for('accounting_debts_branch',es=es)}}">
+   {% for key,value in form_data.items() %}{% if key not in ('linked_customer_id','force_new_customer','override_reason') %}<input type="hidden" name="{{key}}" value="{{value}}">{% endif %}{% endfor %}
+   <input type="hidden" name="force_new_customer" value="yes">
+   <label class="form-label">سبب إنشاء عميل مستقل (إلزامي)</label>
+   <textarea class="form-control mb-2" name="override_reason" minlength="8" maxlength="500" placeholder="مثلاً: رقم الجوال مشترك بين منشأتين مختلفتين، وتأكدنا من عدم التطابق" required></textarea>
+   <button class="btn btn-outline-warning" type="submit">اعتماد عميل جديد منفصل</button>
+  </form>
+ </div>
+ {% else %}<div class="alert alert-info">إذا لم يكن أي من العملاء المقترحين هو العميل الصحيح، اطلب اعتماد إنشاء عميل جديد من الإدارة.</div>{% endif %}
+ <a class="btn btn-secondary" href="{{url_for('accounting_debts_branch',es=es)}}">إلغاء الإضافة والرجوع</a>
+</div>
+{% endblock %}
