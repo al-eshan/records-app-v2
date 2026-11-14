@@ -9,7 +9,8 @@
     <div class="d-flex gap-2 flex-wrap">
       <a href="{{url_for('debt_customer_index')}}" class="btn btn-outline-primary">بحث العملاء</a>
       <a href="{{url_for('accounting_debts')}}" class="btn btn-secondary">دفتر الديون</a>
-      {% if is_admin %}<a href="{{url_for('debt_customer_duplicates')}}" class="btn btn-outline-warning">سجل الدمج</a>{% endif %}
+      {% if is_admin %}<a href="{{url_for('debt_customer_duplicates')}}" class="btn btn-outline-warning">سجل الدمج</a>
+      <a href="{{url_for('accounting_debts_trash')}}" class="btn btn-outline-danger">🗑️ محذوفات الديون</a>{% endif %}
     </div>
   </div>
   {% if merged %}
@@ -40,7 +41,19 @@
           <td>{{d.last_sent_at or '-'}}</td>
           <td><a href="{{url_for('debt_collection_case',es=d.es,debt_id=d.id)}}" class="btn btn-sm btn-info">المتابعة</a>
               <a href="{{url_for('accounting_debts_detail',es=d.es,row_id=d.id)}}" class="btn btn-sm btn-outline-primary">تفاصيل الدين</a>
-              <a href="{{url_for('accounting_debts_branch',es=d.es,edit_id=d.id)}}" class="btn btn-sm btn-outline-warning">تعديل</a></td></tr>
+              <a href="{{url_for('accounting_debts_branch',es=d.es,edit_id=d.id)}}" class="btn btn-sm btn-outline-warning">تعديل</a>
+              {% if is_admin %}
+              <form method="post" action="{{url_for('accounting_debts_branch',es=d.es)}}" class="d-inline"
+                    onsubmit="return confirm('حذف الدين رقم {{d.id}} فقط؟ سيبقى ملف العميل والديون الأخرى، ويمكن استعادة الدين من المحذوفات.');">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="id" value="{{d.id}}">
+                <input type="hidden" name="branch_es" value="{{d.es}}">
+                <input type="hidden" name="debt_delete_token" value="{{session.get('_debt_delete_token','')}}">
+                <input type="hidden" name="confirm_delete" value="DELETE:{{d.id}}">
+                <button type="submit" class="btn btn-sm btn-outline-danger">🗑️ حذف الدين</button>
+              </form>
+              {% endif %}
+              </td></tr>
       {% else %}<tr><td colspan="10">لا توجد ديون ضمن صلاحياتك</td></tr>{% endfor %}
       </tbody></table></div>
   </div>
