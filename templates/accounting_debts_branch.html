@@ -11,6 +11,9 @@
     <div class="d-flex gap-2">
 <a href="{{url_for('debt_customer_index')}}" class="btn btn-outline-primary">🔎 بحث العملاء الموحد</a>
 {% if session.get('username') == 'adm-es' %}
+<a href="{{url_for('accounting_debts_trash')}}" class="btn btn-outline-danger">🗑️ محذوفات الديون</a>
+{% endif %}
+{% if session.get('username') == 'adm-es' %}
 <a href="{{url_for('debt_customer_duplicates')}}" class="btn btn-outline-warning">مراجعة العملاء المكررين</a>
 <a href="{{url_for('debt_communication_settings')}}" class="btn btn-warning">⚙️ رقم واتساب التحصيل</a>
 {% endif %}
@@ -226,6 +229,21 @@
                   <span class="small text-success">آخر إرسال أكدّه الموظف: {{debt_last_confirmed_by_customer[group.customer_id]}}</span>
                   {% endif %}
                 </div>
+                {% if session.get('username') == 'adm-es' %}
+                  {% if group.debt_count == 1 %}
+                  <form method="post" action="{{url_for('accounting_debts_branch',es=selected.es)}}" class="d-inline"
+                        onsubmit="return confirm('حذف الدين رقم {{selected.id}} فقط؟ سيتم نقله إلى محذوفات الديون ويمكن استعادته.');">
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="id" value="{{selected.id}}">
+                    <input type="hidden" name="branch_es" value="{{selected.es}}">
+                    <input type="hidden" name="debt_delete_token" value="{{session.get('_debt_delete_token','')}}">
+                    <input type="hidden" name="confirm_delete" value="DELETE:{{selected.id}}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">🗑️ حذف الدين</button>
+                  </form>
+                  {% elif group.customer_id %}
+                    <a class="btn btn-sm btn-outline-danger" href="{{url_for('debt_customer_profile',customer_id=group.customer_id)}}" title="اختر الفاتورة المطلوبة للحذف دون المساس ببقية فواتير العميل">🗑️ اختيار دين للحذف</a>
+                  {% endif %}
+                {% endif %}
                 {% if group.customer_id %}
                   <a class="btn btn-sm btn-outline-primary" href="{{url_for('debt_customer_profile', customer_id=group.customer_id)}}" title="صفحة مستقلة بجميع فواتير العميل">
                     📋 عرض الديون والتفاصيل ({{ group.debt_count }})

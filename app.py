@@ -130,6 +130,10 @@ PERM_LABELS = {
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("APP_SECRET", "change-this-secret")
+# Cookie policy: Render serves HTTPS; keep localhost usable over HTTP.
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = (os.environ.get("COOKIE_SECURE", "0").strip().lower() in ("1", "true", "yes", "on"))
 # حد الرفع للطلب الواحد: 50 MB
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
@@ -259,6 +263,39 @@ def ensure_debts_ledger_schema(db):
         db.execute("ALTER TABLE debts_ledger ADD COLUMN updated_at TEXT")
 
     db.commit()
+
+
+def ensure_debt_deleted_archive(db):
+    """Keep a reversible, immutable snapshot of each removed debt invoice."""
+    db.execute("""CREATE TABLE IF NOT EXISTS debt_deleted_archive (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      debt_id INTEGER NOT NULL,
+      branch_es TEXT NOT NULL,
+      customer_id INTEGER,
+      snapshot_json TEXT NOT NULL,
+      deleted_by TEXT NOT NULL,
+      deleted_at TEXT NOT NULL DEFAULT (datetime('now')),
+      restored_by TEXT,
+      restored_at TEXT
+    )""")
+    db.execute("""CREATE INDEX IF NOT EXISTS idx_debt_deleted_archive_active
+                  ON debt_deleted_archive(restored_at,deleted_at)""")
+    db.commit()
+
+
+def debt_delete_token():
+    """CSRF protection for administrator-only debt deletion and restoration."""
+    if session.get("username") != MASTER_USERNAME:
+        return ""
+    if not session.get("_debt_delete_token"):
+        session["_debt_delete_token"] = uuid.uuid4().hex
+    return session["_debt_delete_token"]
+
+
+def debt_delete_token_valid():
+    expected = session.get("_debt_delete_token") or ""
+    provided = request.form.get("debt_delete_token") or ""
+    return bool(expected and hmac.compare_digest(expected, provided))
 
 
 def ensure_important_links_schema(db):
@@ -862,6 +899,9 @@ def _wa_total_unread_for_session():
 # =========================
 @app.route("/debug/env", methods=["GET"])
 def debug_env():
+    # Diagnostics expose environment details: administration only.
+    if not session.get("logged_in") or session.get("username") != MASTER_USERNAME:
+        return "Forbidden", 403
     return {
         "DATABASE": DATABASE,
         "GS_ENABLED": _gs_enabled(),
@@ -872,6 +912,9 @@ def debug_env():
 
 @app.route("/debug/gs", methods=["GET"])
 def debug_gs():
+    # Do not allow anonymous callers to invoke external Google Apps Script.
+    if not session.get("logged_in") or session.get("username") != MASTER_USERNAME:
+        return "Forbidden", 403
     # Ping فقط للتأكد أن Apps Script يرد JSON
     data, err = gs_post("ping", tab="any")
     return {"enabled": _gs_enabled(), "data": data, "err": err}
@@ -2195,7 +2238,7 @@ def whatsapp_branches():
                            n.meta_phone_number_id, n.phone_number AS business_phone
                     FROM wa_conversations c
                     JOIN wa_numbers n ON n.id=c.wa_number_id
-                    WHERE c.id=? AND c.wa_number_id IN ({placeholders}) AND c.is_deleted=0 AND c.is_deleted=0 AND c.is_deleted=?
+                    WHERE c.id=? AND c.wa_number_id IN ({placeholders}) AND c.is_deleted=?
                     """,
                     [cid] + list(allowed_ids) + [1 if show_deleted else 0],
                 ).fetchone()
@@ -3356,8 +3399,10 @@ def _to_float(v, default=0.0):
         s = str(v).strip().replace(",", "")
         if s == "":
             return float(default)
-        return float(s)
-    except Exception:
+        value = float(s)
+        # Reject non-finite financial input instead of persisting NaN/Infinity.
+        return value if math.isfinite(value) else float(default)
+    except (ValueError, TypeError, OverflowError):
         return float(default)
 
 
@@ -4348,6 +4393,7 @@ def accounting_debts_branch(es):
         return redirect(url_for("home"))
 
     DEBT_CUSTOMERS['setup']()  # safe lazy migration, never merges existing debts automatically
+    debt_delete_token()  # only for the master administrator
     action = (request.form.get("action") or "").strip()
 
     if request.method == "POST":
@@ -4527,17 +4573,37 @@ def accounting_debts_branch(es):
             flash("تم إلغاء تأكيد الإرسال اليدوي. راجع سجل واتساب الفعلي في ملف التحصيل.","warning")
 
         elif action == "delete":
-            row_id = (request.form.get("id") or "").strip()
+            # Delete exactly one invoice, never a customer profile or a group.
+            # Preserve its original values in an administrator-only archive.
             if session.get("username") != MASTER_USERNAME:
                 return render_template("no_permission.html"), 403
-
-            if row_id:
-                db.execute("""
-                    DELETE FROM debts_ledger
-                    WHERE id = ? AND es = ?
-                """, (row_id, branch_es))
-                db.commit()
-                flash("تم حذف سجل الدين فقط. لم يتم حذف ملف العميل أو سجلات ديونه الأخرى.", "warning")
+            if not debt_delete_token_valid():
+                flash("انتهت صلاحية تأكيد الحذف. حدّث الصفحة وأعد المحاولة.", "danger")
+            else:
+                try:
+                    row_id = int(request.form.get("id") or "")
+                except (ValueError, TypeError):
+                    row_id = 0
+                original = db.execute("SELECT * FROM debts_ledger WHERE id=?", (row_id,)).fetchone() if row_id > 0 else None
+                if not original:
+                    flash("سجل الدين غير موجود أو حُذف سابقًا.", "warning")
+                elif (original["es"] != branch_es or (es != "ALL" and original["es"] != es)):
+                    return render_template("no_permission.html"), 403
+                elif request.form.get("confirm_delete") != f"DELETE:{row_id}":
+                    flash("لم يتم تأكيد حذف الدين المحدد.", "danger")
+                else:
+                    ensure_debt_deleted_archive(db)
+                    with db:
+                        db.execute("""INSERT INTO debt_deleted_archive
+                          (debt_id,branch_es,customer_id,snapshot_json,deleted_by)
+                          VALUES (?,?,?,?,?)""",
+                          (row_id,original["es"],original["customer_id"],
+                           json.dumps(dict(original),ensure_ascii=False),session["username"]))
+                        deleted = db.execute("DELETE FROM debts_ledger WHERE id=? AND es=?",
+                                             (row_id,original["es"])).rowcount
+                        if deleted != 1:
+                            raise sqlite3.IntegrityError("Debt deleted concurrently: rollback archive")
+                    flash(f"نُقل الدين رقم {row_id} إلى محذوفات الديون، ويمكن للإدارة استعادته.", "success")
 
         if es == "ALL":
             return redirect(url_for("accounting_debts"))
@@ -4690,6 +4756,75 @@ def accounting_debts_branch(es):
     )
 
 
+@app.route("/accounting/debts/trash", methods=["GET"])
+@login_required
+def accounting_debts_trash():
+    if session.get("username") != MASTER_USERNAME:
+        return render_template("no_permission.html"), 403
+    db = get_db()
+    ensure_debts_ledger_schema(db)
+    ensure_debt_deleted_archive(db)
+    debt_delete_token()
+    deleted_rows = db.execute("""SELECT * FROM debt_deleted_archive
+          WHERE restored_at IS NULL ORDER BY id DESC LIMIT 500""").fetchall()
+    archived = []
+    for entry in deleted_rows:
+        try:
+            snapshot = json.loads(entry["snapshot_json"])
+            if not isinstance(snapshot, dict):
+                snapshot = {}
+        except (ValueError, TypeError):
+            snapshot = {}
+        archived.append({"archive": entry, "debt": snapshot})
+    return render_template("accounting_debts_trash.html", archived=archived)
+
+
+@app.route("/accounting/debts/trash/<int:archive_id>/restore", methods=["POST"])
+@login_required
+def accounting_debts_restore(archive_id):
+    if session.get("username") != MASTER_USERNAME:
+        return render_template("no_permission.html"), 403
+    if not debt_delete_token_valid():
+        flash("انتهت صلاحية تأكيد الاستعادة. حدّث الصفحة وأعد المحاولة.", "danger")
+        return redirect(url_for("accounting_debts_trash"))
+    db = get_db()
+    ensure_debts_ledger_schema(db)
+    ensure_debt_deleted_archive(db)
+    entry = db.execute("""SELECT * FROM debt_deleted_archive
+        WHERE id=? AND restored_at IS NULL""", (archive_id,)).fetchone()
+    if not entry:
+        flash("هذا الدين غير موجود في المحذوفات أو تم استعادته سابقًا.", "warning")
+        return redirect(url_for("accounting_debts_trash"))
+    try:
+        snapshot = json.loads(entry["snapshot_json"])
+    except (TypeError, ValueError):
+        snapshot = None
+    if not isinstance(snapshot, dict) or not snapshot.get("id") or snapshot.get("es") != entry["branch_es"]:
+        flash("تعذر استعادة هذا السجل لأن بيانات النسخة الاحتياطية غير مكتملة.", "danger")
+        return redirect(url_for("accounting_debts_trash"))
+    if int(snapshot["id"]) != int(entry["debt_id"]):
+        flash("معرف الدين في الأرشيف غير متطابق.", "danger")
+        return redirect(url_for("accounting_debts_trash"))
+    cols = [row[1] for row in db.execute("PRAGMA table_info(debts_ledger)").fetchall()]
+    restored_cols = [col for col in cols if col in snapshot]
+    if not {"id", "es", "customer_name", "invoice_total", "paid_amount", "remaining_amount"}.issubset(restored_cols):
+        flash("لا يمكن استعادة السجل؛ بعض أعمدة الدين الأساسية غير متاحة.", "danger")
+        return redirect(url_for("accounting_debts_trash"))
+    if db.execute("SELECT 1 FROM debts_ledger WHERE id=?", (entry["debt_id"],)).fetchone():
+        flash("لا يمكن الاستعادة لأن رقم الدين مستخدم بالفعل في الدفتر.", "danger")
+        return redirect(url_for("accounting_debts_trash"))
+    quoted_cols = ",".join('"' + col.replace('"','""') + '"' for col in restored_cols)
+    placeholders = ",".join("?" for _ in restored_cols)
+    with db:
+        db.execute(f"INSERT INTO debts_ledger ({quoted_cols}) VALUES ({placeholders})",
+                   [snapshot[col] for col in restored_cols])
+        db.execute("""UPDATE debt_deleted_archive
+              SET restored_by=?,restored_at=datetime('now') WHERE id=? AND restored_at IS NULL""",
+                   (session["username"], archive_id))
+    flash(f"تمت استعادة الدين رقم {entry['debt_id']} بجميع مبالغه الأصلية.", "success")
+    return redirect(url_for("accounting_debts_trash"))
+
+
 @app.route("/accounting/debts/<es>/detail/<int:row_id>")
 @login_required
 def accounting_debts_detail(es, row_id):
@@ -4715,6 +4850,7 @@ def accounting_debts_detail(es, row_id):
         flash("ليس لديك صلاحية للوصول إلى هذه الصفحة", "danger")
         return redirect(url_for("home"))
 
+    debt_delete_token()
     return render_template("accounting_debts_detail.html", row=row, es=es)
 
 

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-tiles" style="max-width:1250px;margin:auto">
+  <div class="page-titlebar d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div><h3>🗑️ محذوفات دفتر الديون</h3>
+      <span class="text-muted">خاصة بالإدارة — أرشيف قابل للاستعادة، لا يشمل حذف ملف العميل</span></div>
+    <a href="{{url_for('accounting_debts')}}" class="btn btn-secondary">العودة إلى دفتر الديون</a>
+  </div>
+  <div class="tile-card">
+    <p class="small text-muted">الحذف يزيل الدين المحدد من إجماليات الدفتر ويحفظ نسخة من تفاصيله الأصلية هنا، ولا يحذف بقية ديون العميل أو سجل مراسلاته.</p>
+    <div class="table-responsive">
+      <table class="table table-bordered table-striped align-middle text-center">
+        <thead><tr><th>رقم الدين</th><th>العميل</th><th>الفرع</th><th>الفاتورة</th><th>المتبقي</th><th>حُذف بواسطة</th><th>تاريخ الحذف</th><th>الإجراءات</th></tr></thead>
+        <tbody>
+        {% for item in archived %}
+          {% set a=item.archive %}{% set d=item.debt %}
+          <tr>
+            <td>{{a.debt_id}}</td><td>{{d.get('customer_name','-')}}</td><td>{{a.branch_es}}</td>
+            <td>{{'%.2f'|format(d.get('invoice_total',0) or 0)}} ريال</td>
+            <td>{{'%.2f'|format(d.get('remaining_amount',0) or 0)}} ريال</td>
+            <td>{{a.deleted_by}}</td><td>{{a.deleted_at}}</td>
+            <td>
+              <form method="post" action="{{url_for('accounting_debts_restore',archive_id=a.id)}}"
+                    onsubmit="return confirm('استعادة الدين رقم {{a.debt_id}} إلى دفتر الديون بقيمه الأصلية؟');">
+                <input type="hidden" name="debt_delete_token" value="{{session.get('_debt_delete_token','')}}">
+                <button type="submit" class="btn btn-sm btn-outline-success">↩️ استعادة الدين</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-4">لا توجد ديون محذوفة حاليًا.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -7,7 +7,20 @@
       <h3>تفاصيل العميل - {{ es }}</h3>
       <span class="text-muted">عرض كامل بيانات سجل الدين</span>
     </div>
-    <a href="{{ url_for('accounting_debts_branch', es=es) }}" class="btn btn-secondary">رجوع</a>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{{ url_for('accounting_debts_branch', es=es) }}" class="btn btn-secondary">رجوع</a>
+      {% if session.get('username') == 'adm-es' %}
+      <form method="post" action="{{url_for('accounting_debts_branch',es=row.es)}}"
+            onsubmit="return confirm('تأكيد حذف الدين رقم {{row.id}} فقط؟ يمكن استعادته لاحقًا من محذوفات الديون.');">
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="id" value="{{row.id}}">
+        <input type="hidden" name="branch_es" value="{{row.es}}">
+        <input type="hidden" name="debt_delete_token" value="{{session.get('_debt_delete_token','')}}">
+        <input type="hidden" name="confirm_delete" value="DELETE:{{row.id}}">
+        <button type="submit" class="btn btn-outline-danger">🗑️ حذف الدين</button>
+      </form>
+      {% endif %}
+    </div>
   </div>
 
   <div class="tile-card">
